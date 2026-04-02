@@ -63,33 +63,41 @@ def load_templates():
 def detect_transparency_in_bytes(data):
     """
     Перевіряє байти на наявність прозорості ДО конвертації в RGB.
+    Використовує контекстний менеджер для коректного закриття Image.
     """
     try:
-        img = Image.open(BytesIO(data))
-        # 1. RGBA (Alpha channel)
-        if img.mode == 'RGBA':
-            extrema = img.getextrema() 
-            if extrema[3][0] < 255: 
-                return True, "Прозорість (Alpha канал)"
-        # 2. Paletted (GIF/PNG-8)
-        elif img.mode == 'P':
-            if 'transparency' in img.info:
-                return True, "Прозорість (Index)"
+        with Image.open(BytesIO(data)) as img:
+            # 1. RGBA (Alpha channel)
+            if img.mode == 'RGBA':
+                extrema = img.getextrema()
+                if extrema[3][0] < 255:
+                    return True, "Прозорість (Alpha канал)"
+            # 2. Paletted (GIF/PNG-8)
+            elif img.mode == 'P':
+                if 'transparency' in img.info:
+                    return True, "Прозорість (Index)"
         return False, None
     except Exception:
         return False, None
 
 def pil_from_bytes(data):
+    """Конвертує байти в PIL-зображення у форматі RGB.
+
+    Повертає зображення або None при помилці.
+    Відповідальність за закриття зображення лежить на викликачі.
+    """
     try:
-        img = Image.open(BytesIO(data))
-        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-            img = img.convert('RGBA')
-            white_bg = Image.new("RGB", img.size, (255, 255, 255))
-            white_bg.paste(img, (0, 0), img)
-            img = white_bg
-        else:
-            img = img.convert("RGB")
-        return img
+        with Image.open(BytesIO(data)) as raw:
+            if raw.mode in ('RGBA', 'LA') or (raw.mode == 'P' and 'transparency' in raw.info):
+                # Компонуємо прозоре зображення на білому тлі
+                rgba = raw.convert('RGBA')
+                white_bg = Image.new("RGB", raw.size, (255, 255, 255))
+                white_bg.paste(rgba, (0, 0), rgba)
+                rgba.close()
+                return white_bg
+            else:
+                # convert() повертає нову незалежну копію
+                return raw.convert("RGB")
     except Exception:
         return None
 
@@ -249,21 +257,6 @@ def detect_1px_border(pil_image, black_threshold=80, std_threshold=15.0):
 
     except Exception as e:
         return False, f"Err border: {e}"
-
-def detect_ai_generated(pil_image):
-    reasons = []
-    try:
-        info = pil_image.info
-        s_info = str(info).lower()
-        ai_markers = ["midjourney", "dall-e", "stable diffusion", "adobe firefly", "generative"]
-        for m in ai_markers:
-            if m in s_info:
-                reasons.append(f"Metadata: {m}")
-    except: pass
-
-    if reasons:
-        return True, ", ".join(reasons)
-    return False, None
 
 def detect_shadows_on_bg(pil_image, shadow_std_dev_threshold=15.0):
     """
@@ -506,7 +499,6 @@ def analyze_and_classify_photo(width, height, sharpness, conf, metrics_results):
         ("has_watermark", "Водяний знак", metrics_results.get("watermark_reason")),
         ("has_rus_text", "Рос. текст", "Знайдено кирилицю"),
         ("has_qr_url", "URL/QR на фото", metrics_results.get("qr_url_data")),
-        ("is_ai_generated", "ШІ/Generative", metrics_results.get("ai_reason"))
     ]
 
     for key, reason_txt, debug_txt in critical_flags:
