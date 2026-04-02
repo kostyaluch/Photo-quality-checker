@@ -11,7 +11,7 @@ from processing_engine import process_file
 class ToolTip(object):
     def __init__(self, widget, text='widget info'):
         self.waittime = 500
-        self.wraplength = 250
+        self.wraplength = 320
         self.widget = widget
         self.text = text
         self.widget.bind("<Enter>", self.enter)
@@ -28,17 +28,29 @@ class ToolTip(object):
         self.id = None
         if id: self.widget.after_cancel(id)
     def showtip(self, event=None):
-        x = y = 0
-        x, y, cx, cy = self.widget.bbox("insert")
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 20
-        self.tw = tk.Toplevel(self.widget)
+        widget = self.widget
+        try:
+            x = widget.winfo_rootx() + widget.winfo_width() // 2
+            y = widget.winfo_rooty() + widget.winfo_height() + 4
+        except Exception:
+            x = widget.winfo_rootx() + 25
+            y = widget.winfo_rooty() + 20
+        self.tw = tk.Toplevel(widget)
         self.tw.wm_overrideredirect(True)
-        self.tw.wm_geometry("+%d+%d" % (x, y))
         label = tk.Label(self.tw, text=self.text, justify='left',
-                         background="#ffffe0", relief='solid', borderwidth=1,
-                         wraplength=self.wraplength)
-        label.pack(ipadx=1)
+                         background="#fffbe6", foreground="#333333",
+                         relief='solid', borderwidth=1,
+                         font=('Helvetica', 9),
+                         wraplength=self.wraplength,
+                         padx=6, pady=4)
+        label.pack()
+        # Adjust so the tooltip stays inside the screen
+        self.tw.update_idletasks()
+        sw = widget.winfo_screenwidth()
+        tw_w = self.tw.winfo_width()
+        if x + tw_w > sw:
+            x = sw - tw_w - 5
+        self.tw.wm_geometry("+%d+%d" % (x, y))
     def hidetip(self):
         tw = self.tw
         self.tw = None
@@ -47,7 +59,7 @@ class ToolTip(object):
 class PhotoQualityGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Photo Quality Checker v11.2 (ETA Feature)")
+        self.title("Photo Quality Checker")
         self.geometry("800x850")
         self.resizable(True, True)
         self.conf = load_config()
@@ -74,14 +86,21 @@ class PhotoQualityGUI(tk.Tk):
         f_inner.pack(fill="x", padx=5, pady=5)
         ttk.Label(f_inner, text="Excel файл:").pack(side="left")
         self.file_path_var = tk.StringVar()
-        ttk.Entry(f_inner, textvariable=self.file_path_var).pack(side="left", fill="x", expand=True, padx=5)
-        ttk.Button(f_inner, text="Огляд...", command=self.browse_file).pack(side="left")
+        file_entry = ttk.Entry(f_inner, textvariable=self.file_path_var)
+        file_entry.pack(side="left", fill="x", expand=True, padx=5)
+        ToolTip(file_entry, "Шлях до Excel (.xlsx/.xls) або CSV-файлу з даними про товари. "
+                            "Можна ввести вручну або натиснути «Огляд…».")
+        browse_btn = ttk.Button(f_inner, text="Огляд...", command=self.browse_file)
+        browse_btn.pack(side="left")
+        ToolTip(browse_btn, "Відкрити діалог вибору файлу Excel або CSV.")
         c_inner = ttk.Frame(top_frame)
         c_inner.pack(fill="x", padx=5, pady=5)
         ttk.Label(c_inner, text="Колонка з посиланнями:").pack(side="left")
         self.col_combo = ttk.Combobox(c_inner, values=[], width=40, state="readonly")
         self.col_combo.pack(side="left", padx=5)
         self.col_combo.bind("<<ComboboxSelected>>", self.on_column_selected)
+        ToolTip(self.col_combo, "Оберіть колонку, яка містить URL-адреси або шляхи до зображень. "
+                                "Програма автоматично визначає найбільш відповідну колонку після завантаження файлу.")
         self.col_status_var = tk.StringVar(value="(Оберіть файл)")
         ttk.Label(c_inner, textvariable=self.col_status_var, foreground="gray").pack(side="left", padx=10)
 
@@ -92,37 +111,67 @@ class PhotoQualityGUI(tk.Tk):
         grid_f.pack(fill="x", padx=5, pady=5)
         
         ttk.Label(grid_f, text="Параметр", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(grid_f, text="Хороше", style="Header.TLabel", foreground="green").grid(row=0, column=1, padx=10)
+        good_lbl = ttk.Label(grid_f, text="Хороше ✔", style="Header.TLabel", foreground="green")
+        good_lbl.grid(row=0, column=1, padx=10)
+        ToolTip(good_lbl, "Мінімальне значення, яке вважається прийнятним. "
+                          "Зображення з показниками ≥ цього порогу отримають позначку «Добре».")
         ttk.Label(grid_f, text="Логіка з'єднання:", font=("Arial", 8, "italic")).grid(row=0, column=2)
-        ttk.Label(grid_f, text="Погане", style="Header.TLabel", foreground="red").grid(row=0, column=3, padx=10)
+        bad_lbl = ttk.Label(grid_f, text="Погане ✘", style="Header.TLabel", foreground="red")
+        bad_lbl.grid(row=0, column=3, padx=10)
+        ToolTip(bad_lbl, "Максимальне значення, нижче якого зображення вважається поганим. "
+                         "Зображення з показниками ≤ цього порогу отримають позначку «Погано».")
 
-        ttk.Label(grid_f, text="Ширина (px):").grid(row=1, column=0, sticky="w", pady=2)
+        width_lbl = ttk.Label(grid_f, text="Ширина (px):")
+        width_lbl.grid(row=1, column=0, sticky="w", pady=2)
+        ToolTip(width_lbl, "Горизонтальний розмір зображення у пікселях.")
         self.good_w = tk.IntVar(value=self.conf["good"]["width"])
-        ttk.Entry(grid_f, textvariable=self.good_w, width=8).grid(row=1, column=1)
+        good_w_entry = ttk.Entry(grid_f, textvariable=self.good_w, width=8)
+        good_w_entry.grid(row=1, column=1)
+        ToolTip(good_w_entry, "Мінімальна ширина (px) для «хорошого» зображення. Наприклад: 800.")
         self.bad_w = tk.IntVar(value=self.conf["bad"]["width"])
-        ttk.Entry(grid_f, textvariable=self.bad_w, width=8).grid(row=1, column=3)
+        bad_w_entry = ttk.Entry(grid_f, textvariable=self.bad_w, width=8)
+        bad_w_entry.grid(row=1, column=3)
+        ToolTip(bad_w_entry, "Максимальна ширина (px) для «поганого» зображення. Наприклад: 400.")
 
         self.good_logic_op = tk.StringVar(value=self.conf.get("good_logic_operator", "АБО"))
         op_cb_good = ttk.Combobox(grid_f, textvariable=self.good_logic_op, values=["І", "АБО"], width=5, state="readonly")
         op_cb_good.grid(row=2, column=1)
+        ToolTip(op_cb_good, "«І» — зображення хороше, тільки якщо ширина І висота відповідають порогу.\n"
+                            "«АБО» — достатньо, щоб хоча б один з параметрів відповідав.")
         
         ttk.Label(grid_f, text="<--- (Ширина ? Висота) --->", font=("Arial", 7), foreground="gray").grid(row=2, column=2)
         
         self.bad_logic_op = tk.StringVar(value=self.conf.get("bad_logic_operator", "І"))
         op_cb_bad = ttk.Combobox(grid_f, textvariable=self.bad_logic_op, values=["І", "АБО"], width=5, state="readonly")
         op_cb_bad.grid(row=2, column=3)
+        ToolTip(op_cb_bad, "«І» — зображення погане, тільки якщо ширина І висота нижче порогу.\n"
+                           "«АБО» — достатньо, щоб хоча б один параметр був нижче порогу.")
 
-        ttk.Label(grid_f, text="Висота (px):").grid(row=3, column=0, sticky="w", pady=2)
+        height_lbl = ttk.Label(grid_f, text="Висота (px):")
+        height_lbl.grid(row=3, column=0, sticky="w", pady=2)
+        ToolTip(height_lbl, "Вертикальний розмір зображення у пікселях.")
         self.good_h = tk.IntVar(value=self.conf["good"]["height"])
-        ttk.Entry(grid_f, textvariable=self.good_h, width=8).grid(row=3, column=1)
+        good_h_entry = ttk.Entry(grid_f, textvariable=self.good_h, width=8)
+        good_h_entry.grid(row=3, column=1)
+        ToolTip(good_h_entry, "Мінімальна висота (px) для «хорошого» зображення. Наприклад: 800.")
         self.bad_h = tk.IntVar(value=self.conf["bad"]["height"])
-        ttk.Entry(grid_f, textvariable=self.bad_h, width=8).grid(row=3, column=3)
+        bad_h_entry = ttk.Entry(grid_f, textvariable=self.bad_h, width=8)
+        bad_h_entry.grid(row=3, column=3)
+        ToolTip(bad_h_entry, "Максимальна висота (px) для «поганого» зображення. Наприклад: 400.")
 
-        ttk.Label(grid_f, text="Різкість (Laplacian):").grid(row=4, column=0, sticky="w", pady=5)
+        sharp_lbl = ttk.Label(grid_f, text="Різкість (Laplacian):")
+        sharp_lbl.grid(row=4, column=0, sticky="w", pady=5)
+        ToolTip(sharp_lbl, "Оцінка різкості за методом Лапласіана. "
+                           "Чим вище значення — тим чіткіше зображення. "
+                           "Розмиті фото мають низький показник (< 50–100).")
         self.good_s = tk.DoubleVar(value=self.conf["good"]["sharpness"])
-        ttk.Entry(grid_f, textvariable=self.good_s, width=8).grid(row=4, column=1)
+        good_s_entry = ttk.Entry(grid_f, textvariable=self.good_s, width=8)
+        good_s_entry.grid(row=4, column=1)
+        ToolTip(good_s_entry, "Мінімальний показник різкості для «хорошого» фото. Наприклад: 80.")
         self.bad_s = tk.DoubleVar(value=self.conf["bad"]["sharpness"])
-        ttk.Entry(grid_f, textvariable=self.bad_s, width=8).grid(row=4, column=3)
+        bad_s_entry = ttk.Entry(grid_f, textvariable=self.bad_s, width=8)
+        bad_s_entry.grid(row=4, column=3)
+        ToolTip(bad_s_entry, "Максимальний показник різкості для «поганого» фото. Наприклад: 30.")
 
         # --- 3. Опції ---
         opts_frame = ttk.LabelFrame(self, text="3. Додаткові перевірки")
@@ -133,17 +182,23 @@ class PhotoQualityGUI(tk.Tk):
         self.opt_shadows = tk.BooleanVar(value=opts.get("check_shadows", False))
         cb_shad = ttk.Checkbutton(opts_frame, text="Тіні / Брудний фон", variable=self.opt_shadows, style="Bold.TCheckbutton")
         cb_shad.grid(row=0, column=0, sticky="w", padx=10, pady=5)
+        ToolTip(cb_shad, "Виявляє фотографії з тінями або забрудненим фоном. "
+                         "Аналізує рівномірність фону та наявність темних плям.")
         f_shad = ttk.Frame(opts_frame)
         f_shad.grid(row=0, column=1, sticky="w")
         ttk.Label(f_shad, text="Поріг:").pack(side="left")
         self.shadow_thresh = tk.DoubleVar(value=self.conf.get("shadow_threshold", 10.0))
         sc_shad = tk.Scale(f_shad, from_=5.0, to=30.0, resolution=1.0, orient="horizontal", variable=self.shadow_thresh, length=80)
         sc_shad.pack(side="left")
+        ToolTip(sc_shad, "Чутливість виявлення тіней (5–30). "
+                         "Менше значення — суворіша перевірка (більше спрацьовувань). "
+                         "Більше значення — ігнорує незначні відхилення фону.")
 
         # Row 1
         self.opt_borders = tk.BooleanVar(value=opts.get("check_borders", True))
         cb_bord = ttk.Checkbutton(opts_frame, text="Некадровані (білі поля)", variable=self.opt_borders, style="Bold.TCheckbutton")
         cb_bord.grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        ToolTip(cb_bord, "Виявляє зображення, де товар не займає весь кадр і навколо є надмірні білі поля.")
         f_bord = ttk.Frame(opts_frame)
         f_bord.grid(row=1, column=1, sticky="w")
         ttk.Label(f_bord, text="Макс %:").pack(side="left")
@@ -152,18 +207,30 @@ class PhotoQualityGUI(tk.Tk):
         def update_border_r(val): self.border_r.set(float(val) / 100.0)
         sc_bord = tk.Scale(f_bord, from_=1, to=50, orient="horizontal", variable=self.border_percent, command=update_border_r, length=80)
         sc_bord.pack(side="left")
+        ToolTip(sc_bord, "Максимально допустима частка білих полів від розміру зображення (1–50%). "
+                         "Наприклад, 10% означає, що поля не повинні перевищувати 10% ширини/висоти.")
 
         # Row 2
         self.opt_logos = tk.BooleanVar(value=opts.get("check_logos", False))
-        ttk.Checkbutton(opts_frame, text="Логотипи Rozetka", variable=self.opt_logos, style="Bold.TCheckbutton").grid(row=2, column=0, sticky="w", padx=10, pady=5)
+        cb_logos = ttk.Checkbutton(opts_frame, text="Логотипи Rozetka", variable=self.opt_logos, style="Bold.TCheckbutton")
+        cb_logos.grid(row=2, column=0, sticky="w", padx=10, pady=5)
+        ToolTip(cb_logos, "Виявляє логотипи або фірмові елементи Rozetka на зображенні. "
+                          "Такі фото, як правило, заборонені маркетплейсами.")
         self.opt_watermark = tk.BooleanVar(value=opts.get("check_watermarks", False))
-        ttk.Checkbutton(opts_frame, text="Водяні знаки", variable=self.opt_watermark, style="Bold.TCheckbutton").grid(row=2, column=1, sticky="w", padx=0, pady=5)
+        cb_wm = ttk.Checkbutton(opts_frame, text="Водяні знаки", variable=self.opt_watermark, style="Bold.TCheckbutton")
+        cb_wm.grid(row=2, column=1, sticky="w", padx=0, pady=5)
+        ToolTip(cb_wm, "Виявляє будь-які напівпрозорі водяні знаки або текстові нашарування на фото.")
 
         # Row 3
         self.opt_rus_text = tk.BooleanVar(value=opts.get("check_rus_text", False))
-        ttk.Checkbutton(opts_frame, text="Російський текст", variable=self.opt_rus_text, style="Bold.TCheckbutton").grid(row=3, column=0, sticky="w", padx=10, pady=5)
+        cb_rus = ttk.Checkbutton(opts_frame, text="Російський текст", variable=self.opt_rus_text, style="Bold.TCheckbutton")
+        cb_rus.grid(row=3, column=0, sticky="w", padx=10, pady=5)
+        ToolTip(cb_rus, "За допомогою OCR виявляє текст російською мовою на зображенні. "
+                        "Увага: ця перевірка може уповільнити обробку.")
         self.opt_qr_url = tk.BooleanVar(value=opts.get("check_qr_url", False))
-        ttk.Checkbutton(opts_frame, text="URL / QR коди", variable=self.opt_qr_url, style="Bold.TCheckbutton").grid(row=3, column=1, sticky="w", padx=0, pady=5)
+        cb_qr = ttk.Checkbutton(opts_frame, text="URL / QR коди", variable=self.opt_qr_url, style="Bold.TCheckbutton")
+        cb_qr.grid(row=3, column=1, sticky="w", padx=0, pady=5)
+        ToolTip(cb_qr, "Виявляє QR-коди або текстові URL-адреси на зображенні.")
 
         # Row 4
         self.opt_1px = tk.BooleanVar(value=opts.get("check_1px_border", False))
@@ -180,20 +247,33 @@ class PhotoQualityGUI(tk.Tk):
         self.conc_var = tk.IntVar(value=self.conf.get("concurrency", 4))
         self.conc_combo = ttk.Combobox(f_flows, textvariable=self.conc_var, values=[1, 2, 4, 8, 12, 16], width=3, state="readonly")
         self.conc_combo.pack(side="left", padx=5)
+        ToolTip(self.conc_combo, "Кількість паралельних потоків для завантаження та обробки зображень. "
+                                 "Більше потоків — швидша обробка, але вища навантаженість мережі та CPU. "
+                                 "Рекомендовано: 4–8 для стандартних ПК.")
 
         f_btns = ttk.Frame(ctrl_frame)
         f_btns.pack(side="left", fill="x", expand=True)
         # Єдина динамічна кнопка: «▶ Запустити» / «⏸ Пауза» / «▶ Продовжити»
         self.run_pause_btn = ttk.Button(f_btns, text="▶ ЗАПУСТИТИ ОБРОБКУ", command=self._dynamic_btn_click)
         self.run_pause_btn.pack(side="left", padx=5, fill="x", expand=True)
+        ToolTip(self.run_pause_btn, "Запустити обробку файлу. Під час роботи кнопка переключається між «Пауза» та «Продовжити».")
         self.stop_btn = ttk.Button(f_btns, text="Стоп", command=self.stop_process, state="disabled")
         self.stop_btn.pack(side="left", padx=5)
+        ToolTip(self.stop_btn, "Зупинити поточну обробку. Вже оброблені результати будуть збережені.")
 
         f_utils = ttk.Frame(ctrl_frame)
         f_utils.pack(side="right", padx=10)
-        ttk.Button(f_utils, text="Папка", command=self.open_output_folder).pack(side="left", padx=2)
-        ttk.Button(f_utils, text="Очистити кеш", command=self.clear_cache_clicked).pack(side="left", padx=2)
-        ttk.Button(f_utils, text="🔄 Реагрегація файлу", command=self.update_status_clicked).pack(side="left", padx=2)
+        folder_btn = ttk.Button(f_utils, text="📁 Папка", command=self.open_output_folder)
+        folder_btn.pack(side="left", padx=2)
+        ToolTip(folder_btn, "Відкрити папку з результатами останньої обробки у провіднику файлів.")
+        cache_btn = ttk.Button(f_utils, text="Очистити кеш", command=self.clear_cache_clicked)
+        cache_btn.pack(side="left", padx=2)
+        ToolTip(cache_btn, "Видалити локальний кеш завантажених зображень. "
+                           "Використовуйте, якщо зображення оновились і потрібно завантажити їх заново.")
+        reaggregate_btn = ttk.Button(f_utils, text="🔄 Реагрегація файлу", command=self.update_status_clicked)
+        reaggregate_btn.pack(side="left", padx=2)
+        ToolTip(reaggregate_btn, "Перерахувати підсумковий файл статусів на основі відредагованого файлу деталей. "
+                                 "Корисно, якщо ви вручну виправили статуси у файлі деталей і хочете оновити зведений звіт.")
 
         # Прогрес
         prog_frame = ttk.Frame(self)
