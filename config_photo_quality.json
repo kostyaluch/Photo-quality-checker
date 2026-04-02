@@ -1,0 +1,29 @@
+{
+  "good": {
+    "width": 800,
+    "height": 800,
+    "sharpness": 50.0
+  },
+  "bad": {
+    "width": 500,
+    "height": 500,
+    "sharpness": 20.0
+  },
+  "bad_logic_operator": "І",
+  "good_logic_operator": "АБО",
+  "concurrency": 8,
+  "last_manual_column": "goods_images_url",
+  "border_ratio": 0.15,
+  "shadow_threshold": 5.0,
+  "options": {
+    "check_logos": false,
+    "check_rus_text": true,
+    "check_shadows": true,
+    "check_qr_url": false,
+    "check_watermarks": false,
+    "check_borders": true,
+    "check_ai": false,
+    "check_1px_border": false
+  },
+  "logo_match_threshold": 0.5
+}
