@@ -5,6 +5,7 @@ import json
 import shutil
 import hashlib
 from datetime import datetime
+import aiohttp
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -15,7 +16,8 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config_photo_quality.json")
 CACHE_DIR = os.path.join(BASE_DIR, ".photo_cache")
 
 HTTP_TIMEOUT = 15
-URL_REGEX = re.compile(r'(https?://[^\s,;\)\]\}]+)', re.IGNORECASE)
+# Виключаємо лапки, крапки та коми з URL вже на рівні регексу
+URL_REGEX = re.compile(r"(https?://[^\s,;\)\]\}\'\"]+)", re.IGNORECASE)
 
 DEFAULT_CONFIG = {
     "good": {"width": 800, "height": 800, "sharpness": 80.0},
@@ -33,7 +35,6 @@ DEFAULT_CONFIG = {
         "check_logos": True,
         "check_watermarks": False,
         "check_borders": True,
-        "check_ai": False,
         "check_1px_border": False
     }
 }
@@ -162,7 +163,8 @@ def extract_urls(text):
         seen = set()
         out = []
         for u in http_links:
-            u_clean = u.rstrip(').,;\'"')
+            # Відрізаємо зайві символи в кінці посилання
+            u_clean = u.rstrip(").,;'\"")
             if u_clean not in seen:
                 seen.add(u_clean)
                 out.append(u_clean)
@@ -225,3 +227,44 @@ def download_image_bytes(path_or_url, session):
         return content, None
     except Exception as e:
         return None, str(e)
+
+
+async def async_download_image_bytes(path_or_url, session, semaphore):
+    """Асинхронне завантаження зображення через aiohttp.
+
+    Для локальних файлів використовує синхронне читання (швидко).
+    Для HTTP/HTTPS — асинхронний запит з обмеженням паралельності (semaphore).
+    Результат кешується на диск для повторного використання.
+    """
+    ensure_cache_dir()
+    is_http = path_or_url.lower().startswith(('http://', 'https://'))
+
+    if not is_http:
+        # Локальний файл — читаємо синхронно
+        if os.path.isfile(path_or_url):
+            try:
+                with open(path_or_url, 'rb') as f:
+                    return f.read(), None
+            except Exception as e:
+                return None, f"Read Error: {e}"
+        return None, "File not found"
+
+    # Кеш перевіряємо поза семафором — швидка операція
+    if is_cached(path_or_url):
+        return load_from_cache(path_or_url), None
+
+    async with semaphore:
+        try:
+            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+            async with session.get(path_or_url, timeout=timeout) as resp:
+                resp.raise_for_status()
+                content = await resp.read()
+
+                if len(content) > 50 * 1024 * 1024:
+                    return None, "File > 50MB"
+
+                content_type = resp.headers.get("Content-Type")
+                save_to_cache(path_or_url, content, content_type)
+                return content, None
+        except Exception as e:
+            return None, str(e)

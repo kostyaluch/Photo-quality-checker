@@ -1,4 +1,5 @@
 # main_app.py
+import asyncio
 import os
 import threading
 import tkinter as tk
@@ -52,10 +53,13 @@ class PhotoQualityGUI(tk.Tk):
         self.conf = load_config()
         ensure_cache_dir()
         self.lock = threading.Lock()
-        self.pause_event = threading.Event()
-        self.pause_event.set()
         self.stop_event = threading.Event()
         self.processing_thread = None
+        # Стан обробки: 'idle' | 'running' | 'paused'
+        self._proc_state = "idle"
+        # Посилання на asyncio-цикл та asyncio.Event (задаються у thread_target)
+        self._async_loop = None
+        self._async_pause_event = None
         self.create_widgets()
 
     def create_widgets(self):
@@ -162,14 +166,9 @@ class PhotoQualityGUI(tk.Tk):
         ttk.Checkbutton(opts_frame, text="URL / QR коди", variable=self.opt_qr_url, style="Bold.TCheckbutton").grid(row=3, column=1, sticky="w", padx=0, pady=5)
 
         # Row 4
-        self.opt_ai = tk.BooleanVar(value=opts.get("check_ai", False))
-        cb_ai = ttk.Checkbutton(opts_frame, text="ШІ / Generative (beta)", variable=self.opt_ai, style="Bold.TCheckbutton")
-        cb_ai.grid(row=4, column=0, sticky="w", padx=10, pady=5)
-        ToolTip(cb_ai, "Перевірка метаданих на наявність генераторів (Midjourney, Adobe Firefly тощо).")
-
         self.opt_1px = tk.BooleanVar(value=opts.get("check_1px_border", False))
         cb_1px = ttk.Checkbutton(opts_frame, text="Тонка рамка (1px)", variable=self.opt_1px, style="Bold.TCheckbutton")
-        cb_1px.grid(row=4, column=1, sticky="w", padx=0, pady=5)
+        cb_1px.grid(row=4, column=0, sticky="w", padx=10, pady=5)
         ToolTip(cb_1px, "Виявляє чорні/темні рамки товщиною 1-2 пікселі по самому краю фото.")
 
         # --- 4. Керування ---
@@ -184,10 +183,9 @@ class PhotoQualityGUI(tk.Tk):
 
         f_btns = ttk.Frame(ctrl_frame)
         f_btns.pack(side="left", fill="x", expand=True)
-        self.run_btn = ttk.Button(f_btns, text="▶ ЗАПУСТИТИ ОБРОБКУ", command=self.run_process_thread)
-        self.run_btn.pack(side="left", padx=5, fill="x", expand=True)
-        self.pause_btn = ttk.Button(f_btns, text="Пауза", command=self.toggle_pause, state="disabled")
-        self.pause_btn.pack(side="left", padx=5)
+        # Єдина динамічна кнопка: «▶ Запустити» / «⏸ Пауза» / «▶ Продовжити»
+        self.run_pause_btn = ttk.Button(f_btns, text="▶ ЗАПУСТИТИ ОБРОБКУ", command=self._dynamic_btn_click)
+        self.run_pause_btn.pack(side="left", padx=5, fill="x", expand=True)
         self.stop_btn = ttk.Button(f_btns, text="Стоп", command=self.stop_process, state="disabled")
         self.stop_btn.pack(side="left", padx=5)
 
@@ -221,11 +219,22 @@ class PhotoQualityGUI(tk.Tk):
         save_config(self.conf)
 
     def browse_file(self):
-        p = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx *.xls")])
-        if not p: return
+        p = filedialog.askopenfilename(
+            filetypes=[
+                ("Підтримувані файли", "*.xlsx *.xls *.csv"),
+                ("Excel Files", "*.xlsx *.xls"),
+                ("CSV Files", "*.csv"),
+            ]
+        )
+        if not p:
+            return
         self.file_path_var.set(p)
         try:
-            df = pd.read_excel(p, engine="openpyxl", nrows=5)
+            ext = os.path.splitext(p)[1].lower()
+            if ext == ".csv":
+                df = pd.read_csv(p, nrows=5, dtype=str)
+            else:
+                df = pd.read_excel(p, engine="openpyxl", nrows=5)
             cols = list(df.columns)
             self.col_combo['values'] = cols
             best_col = self.conf.get("last_manual_column", "")
@@ -258,10 +267,21 @@ class PhotoQualityGUI(tk.Tk):
                 "check_qr_url": self.opt_qr_url.get(),
                 "check_watermarks": self.opt_watermark.get(),
                 "check_borders": self.opt_borders.get(),
-                "check_ai": self.opt_ai.get(),
-                "check_1px_border": self.opt_1px.get()
+                "check_1px_border": self.opt_1px.get(),
             }
         }
+
+    def _dynamic_btn_click(self):
+        """Обробник єдиної динамічної кнопки.
+
+        IDLE → запускає обробку.
+        RUNNING → ставить на паузу.
+        PAUSED → відновлює обробку.
+        """
+        if self._proc_state == "idle":
+            self.run_process_thread()
+        else:
+            self.toggle_pause()
 
     def run_process_thread(self):
         input_path = self.file_path_var.get().strip()
@@ -272,20 +292,39 @@ class PhotoQualityGUI(tk.Tk):
         self.conf.update(current_conf)
         save_config(self.conf)
         self.stop_event.clear()
-        self.pause_event.set()
         self.set_controls_running(True)
         self.append_log("=== ЗАПУСК ОБРОБКИ ===")
         manual_col = self.col_combo.get()
-        self.processing_thread = threading.Thread(target=self.thread_target,
-                                                  args=(input_path, current_conf, manual_col), daemon=True)
+        self.processing_thread = threading.Thread(
+            target=self.thread_target,
+            args=(input_path, current_conf, manual_col),
+            daemon=True,
+        )
         self.processing_thread.start()
 
     def thread_target(self, path, conf, col):
+        """Запускає asyncio event loop у фоновому потоці."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # asyncio.Event для паузи/відновлення без блокування GUI
+        pause_event = asyncio.Event()
+        pause_event.set()  # Встановлено = не на паузі
+
+        self._async_loop = loop
+        self._async_pause_event = pause_event
+
         try:
-            res = process_file(path, conf, self.gui_callback, col, self.pause_event, self.stop_event)
+            res = loop.run_until_complete(
+                process_file(path, conf, self.gui_callback, col, pause_event, self.stop_event)
+            )
             self.after(0, self.on_finished, res)
         except Exception as e:
             self.after(0, self.on_finished, {"error": f"Crash: {str(e)}"})
+        finally:
+            loop.close()
+            self._async_loop = None
+            self._async_pause_event = None
 
     def gui_callback(self, msg):
         self.after(0, self.append_log, msg)
@@ -322,20 +361,45 @@ class PhotoQualityGUI(tk.Tk):
             self.last_out = result.get('with_status')
 
     def set_controls_running(self, is_run):
-        state = "disabled" if is_run else "normal"
-        self.run_btn.config(state=state)
-        self.pause_btn.config(state="normal" if is_run else "disabled")
-        self.stop_btn.config(state="normal" if is_run else "disabled")
+        """Оновлює стан кнопок відповідно до поточного режиму."""
+        if is_run:
+            self._proc_state = "running"
+            self.run_pause_btn.config(text="⏸ Пауза")
+            self.stop_btn.config(state="normal")
+        else:
+            self._proc_state = "idle"
+            self.run_pause_btn.config(text="▶ ЗАПУСТИТИ ОБРОБКУ")
+            self.stop_btn.config(state="disabled")
 
     def toggle_pause(self):
-        if self.pause_event.is_set():
-            self.pause_event.clear(); self.pause_btn.config(text="Продовжити"); self.append_log("PAUSED")
-        else:
-            self.pause_event.set(); self.pause_btn.config(text="Пауза"); self.append_log("RESUMED")
+        """Перемикає між паузою та відновленням через asyncio.Event."""
+        loop = self._async_loop
+        pause_ev = self._async_pause_event
+
+        if loop is None or pause_ev is None:
+            return
+
+        if self._proc_state == "running":
+            # Ставимо на паузу — знімаємо asyncio.Event
+            loop.call_soon_threadsafe(pause_ev.clear)
+            self._proc_state = "paused"
+            self.run_pause_btn.config(text="▶ Продовжити")
+            self.append_log("⏸ PAUSED")
+        elif self._proc_state == "paused":
+            # Відновлюємо — встановлюємо asyncio.Event
+            loop.call_soon_threadsafe(pause_ev.set)
+            self._proc_state = "running"
+            self.run_pause_btn.config(text="⏸ Пауза")
+            self.append_log("▶ RESUMED")
 
     def stop_process(self):
         if messagebox.askyesno("Stop", "Зупинити?"):
-            self.stop_event.set(); self.pause_event.set()
+            self.stop_event.set()
+            # Відновлюємо asyncio.Event, щоб завдання не зависли на паузі
+            loop = self._async_loop
+            pause_ev = self._async_pause_event
+            if loop and pause_ev:
+                loop.call_soon_threadsafe(pause_ev.set)
 
     def open_output_folder(self):
         if hasattr(self, 'last_out') and self.last_out: os.startfile(os.path.dirname(self.last_out))
