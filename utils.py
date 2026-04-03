@@ -160,14 +160,11 @@ def extract_urls(text):
 
     http_links = URL_REGEX.findall(raw_text)
     if http_links:
-        seen = set()
         out = []
         for u in http_links:
             # Відрізаємо зайві символи в кінці посилання
             u_clean = u.rstrip(").,;'\"")
-            if u_clean not in seen:
-                seen.add(u_clean)
-                out.append(u_clean)
+            out.append(u_clean)
         return out
 
     parts = re.split(r'[,\n]+', raw_text)
