@@ -1,0 +1,12 @@
+# Ignore all Tesseract portable binaries and language data files.
+# These are large binary files that should NOT be committed to the repository.
+#
+# Run  scripts/fetch_tesseract.py  to populate this directory automatically,
+# or follow the manual instructions in  docs/ocr.md .
+*
+!.gitignore
+!.gitkeep
+# Allow the tessdata sub-directory itself (but not its contents)
+!tessdata/
+tessdata/*
+!tessdata/.gitkeep

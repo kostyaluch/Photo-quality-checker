@@ -1,6 +1,7 @@
 # image_metrics.py
 import os
 import re
+import sys
 import cv2
 import numpy as np
 import pytesseract
@@ -8,9 +9,35 @@ from pytesseract import Output
 from io import BytesIO
 from PIL import Image, ImageEnhance, ImageOps
 
+
+def resource_path(relative_path: str) -> str:
+    """Return the absolute path to a bundled resource.
+
+    Works both when running as a plain Python script and when packaged with
+    PyInstaller (``--onefile`` or ``--onedir``).  PyInstaller sets the
+    ``sys._MEIPASS`` attribute to the temporary extraction directory, so we
+    prefer that when available; otherwise we fall back to the directory that
+    contains this source file.
+    """
+    base_path = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(__file__)))
+    return os.path.join(base_path, relative_path)
+
+
 # Шлях до папки з шаблонами
 BASE_DIR = os.path.dirname(__file__) if '__file__' in globals() else os.getcwd()
 TEMPLATES_DIR = os.path.join(BASE_DIR, "watermark_templates")
+
+# ---------------------------------------------------------------------------
+# Portable Tesseract OCR paths
+# The binary and language data are expected under vendor/tesseract/ relative
+# to this file (or to the PyInstaller extraction root).
+# ---------------------------------------------------------------------------
+_TESSERACT_EXE = resource_path(os.path.join("vendor", "tesseract", "tesseract.exe"))
+_TESSDATA_DIR = resource_path(os.path.join("vendor", "tesseract", "tessdata"))
+
+if os.path.isfile(_TESSERACT_EXE):
+    pytesseract.pytesseract.tesseract_cmd = _TESSERACT_EXE
+    os.environ["TESSDATA_PREFIX"] = _TESSDATA_DIR
 
 # 1. Текстові маркери водяних знаків
 WATERMARK_KEYWORDS = [
