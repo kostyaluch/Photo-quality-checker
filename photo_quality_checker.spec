@@ -43,6 +43,8 @@ a = Analysis(
         (os.path.join(REPO_ROOT, "watermark_templates"), "watermark_templates"),
         # Default configuration
         (os.path.join(REPO_ROOT, "config_photo_quality.json"), "."),
+        # Application icon
+        (os.path.join(REPO_ROOT, "PQC_logo.ico"), "."),
     ],
     hiddenimports=[
         "PIL._tkinter_finder",
@@ -80,7 +82,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=os.path.join(REPO_ROOT, "PQC_logo.ico"),
 )
 
 coll = COLLECT(
