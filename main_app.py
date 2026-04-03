@@ -7,6 +7,7 @@ from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 from utils import load_config, save_config, clear_cache_dir, ensure_cache_dir, DEFAULT_CONFIG, format_duration
 from processing_engine import process_file
+from image_metrics import resource_path
 
 class ToolTip(object):
     def __init__(self, widget, text='widget info'):
@@ -60,6 +61,7 @@ class PhotoQualityGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Photo Quality Checker")
+        self.iconbitmap(resource_path("PQC_logo.ico"))
         self.geometry("800x850")
         self.resizable(True, True)
         self.conf = load_config()
