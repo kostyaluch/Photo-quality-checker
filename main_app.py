@@ -103,8 +103,7 @@ class PhotoQualityGUI(tk.Tk):
         self.col_combo.bind("<<ComboboxSelected>>", self.on_column_selected)
         ToolTip(self.col_combo, "Оберіть колонку, яка містить URL-адреси або шляхи до зображень. "
                                 "Програма автоматично визначає найбільш відповідну колонку після завантаження файлу.")
-        self.col_status_var = tk.StringVar(value="(Оберіть файл)")
-        ttk.Label(c_inner, textvariable=self.col_status_var, foreground="gray").pack(side="left", padx=10)
+
 
         # --- 2. Метрики ---
         metrics_frame = ttk.LabelFrame(self, text="2. Вимоги до якості")
@@ -222,7 +221,8 @@ class PhotoQualityGUI(tk.Tk):
         self.opt_watermark = tk.BooleanVar(value=opts.get("check_watermarks", False))
         cb_wm = ttk.Checkbutton(opts_frame, text="Водяні знаки", variable=self.opt_watermark, style="Bold.TCheckbutton")
         cb_wm.grid(row=2, column=1, sticky="w", padx=0, pady=5)
-        ToolTip(cb_wm, "Виявляє будь-які напівпрозорі водяні знаки або текстові нашарування на фото.")
+        ToolTip(cb_wm, "Виявляє водяні знаки на фото за допомогою шаблонів із папки watermark_templates. "
+                       "Програма порівнює зображення лише з доданими шаблонами — інші водяні знаки не виявляються.")
 
         # Row 3
         self.opt_rus_text = tk.BooleanVar(value=opts.get("check_rus_text", False))
@@ -297,7 +297,6 @@ class PhotoQualityGUI(tk.Tk):
     
     def on_column_selected(self, event):
         val = self.col_combo.get()
-        self.col_status_var.set(f"Обрано: {val}")
         self.conf["last_manual_column"] = val
         save_config(self.conf)
 
@@ -322,9 +321,7 @@ class PhotoQualityGUI(tk.Tk):
             self.col_combo['values'] = cols
             best_col = self.conf.get("last_manual_column", "")
             if best_col not in cols:
-                for col in cols:
-                    if any(x in str(col).lower() for x in ["img", "url", "photo", "link"]):
-                        best_col = col; break
+                best_col = self._detect_url_column(df, cols)
             if best_col:
                 self.col_combo.set(best_col)
                 self.on_column_selected(None)
@@ -332,6 +329,20 @@ class PhotoQualityGUI(tk.Tk):
                 self.col_combo.set(cols[0])
         except Exception as e:
             messagebox.showerror("Помилка", f"Не вдалося прочитати файл: {e}")
+
+    @staticmethod
+    def _detect_url_column(df, cols):
+        """Return the column with the most URL/image-link values."""
+        import re
+        url_re = re.compile(r'https?://\S+\.(?:jpg|jpeg|png|webp|gif|bmp|tiff?)(\?[^\s]*)?', re.IGNORECASE)
+        best_col = ""
+        best_count = 0
+        for col in cols:
+            count = df[col].astype(str).apply(lambda v: bool(url_re.search(v))).sum()
+            if count > best_count:
+                best_count = count
+                best_col = col
+        return best_col
 
     def collect_settings(self):
         return {
