@@ -242,7 +242,7 @@ def detect_white_borders(pil_image, border_ratio=0.1):
     except Exception as e:
         return False, f"Err borders: {str(e)}"
 
-def detect_1px_border(pil_image, black_threshold=80, std_threshold=15.0):
+def detect_1px_border(pil_image, black_threshold=30, std_threshold=8.0):
     try:
         img = np.array(pil_image)
         if len(img.shape) == 3:
@@ -263,7 +263,7 @@ def detect_1px_border(pil_image, black_threshold=80, std_threshold=15.0):
             mean_inner_1 = np.mean(inner_strip_1)
             mean_inner_2 = np.mean(inner_strip_2)
             
-            if (mean_inner_1 - mean_edge) > 20 or (mean_inner_2 - mean_edge) > 20:
+            if (mean_inner_1 - mean_edge) > 30 and (mean_inner_2 - mean_edge) > 30:
                 return True
             return False
 
