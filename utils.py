@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
     "concurrency": 4,
     "last_manual_column": "",
     "border_ratio": 0.1,
-    "shadow_threshold": 10.0,
+    "shadow_threshold": 50,
     "options": {
         "check_rus_text": False,
         "check_shadows": False,

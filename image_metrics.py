@@ -285,95 +285,165 @@ def detect_1px_border(pil_image, black_threshold=30, std_threshold=8.0, min_cont
     except Exception as e:
         return False, f"Err border: {e}"
 
-def detect_shadows_on_bg(pil_image, shadow_std_dev_threshold=15.0):
+def check_first_photo_bg(pil_image, shadow_tolerance=50):
     """
-    [SMART V3] Виявляє брудний фон, враховуючи вирізи камер та різкий контраст.
-    
-    Логіка:
-    1. Перевірка кольору/темряви/центру (як у V2).
-    2. NEW: Перевірка кутів. Якщо кути білі (>245) -> OK.
-    3. NEW: Перевірка "Hard Edges". Якщо шум (std_dev) дуже великий (>50), 
-       це означає різкий контраст (чорний товар + білий фон), а не м'які тіні. -> OK.
+    Перевіряє перше фото товару на відповідність стандартам Rozetka:
+      1. Фон має бути майже білим (#FFFFFF) по всьому периметру (верх/низ/ліво/право).
+      2. Тіні оцінюються по нижній смузі і периметру; допустимий рівень
+         контролюється параметром shadow_tolerance (0 = суворо, 100 = м'яко).
+
+    Алгоритм:
+      - Аналізує 4 периметральні смуги (по ~8% з кожного боку).
+      - "Білий фон": середня яскравість HSV-V >= 230 і середня насиченість HSV-S <= 25.
+        Якщо ≥ 2 смуги не проходять цей критерій → "Фон не білий".
+      - "Тіні": std_dev яскравості в нижній смузі та периметрі порівнюється з
+        порогом, що лінійно залежить від shadow_tolerance:
+          max_std = 2.0 + tolerance * 0.28  →  2.0 при 0,  30.0 при 100.
+        Якщо нижня смуга або середнє по периметру перевищує поріг → "Тінь".
+
+    Returns: (has_problem: bool, reason: str)
     """
     try:
-        # BGR
+        img = np.array(pil_image)
+        if len(img.shape) == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif img.shape[2] == 4:
+            img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+        elif img.shape[2] == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+        h, w = img.shape[:2]
+
+        strip_h = max(int(h * 0.08), 5)
+        strip_w = max(int(w * 0.08), 5)
+
+        strips = {
+            "top":    img[0:strip_h, :],
+            "bottom": img[h - strip_h:, :],
+            "left":   img[:, 0:strip_w],
+            "right":  img[:, w - strip_w:],
+        }
+
+        def _strip_stats(strip_bgr):
+            hsv = cv2.cvtColor(strip_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+            s_ch = hsv[:, :, 1]
+            v_ch = hsv[:, :, 2]
+            return {
+                "mean_s": float(np.mean(s_ch)),
+                "mean_v": float(np.mean(v_ch)),
+                "std_v":  float(np.std(v_ch)),
+            }
+
+        stats = {name: _strip_stats(strip) for name, strip in strips.items()}
+
+        # --- КРОК 1: Перевірка білого фону ---
+        # Білий піксель: V >= 230, S <= 25 (HSV-шкала 0-255 для OpenCV)
+        WHITE_V_MIN = 230
+        WHITE_S_MAX = 25
+
+        non_white = [
+            f"{name}(V={st['mean_v']:.0f},S={st['mean_s']:.0f})"
+            for name, st in stats.items()
+            if st["mean_v"] < WHITE_V_MIN or st["mean_s"] > WHITE_S_MAX
+        ]
+
+        if len(non_white) >= 2:
+            return True, f"Фон не білий ({', '.join(non_white)})"
+
+        # --- КРОК 2: Перевірка тіней ---
+        # Переводимо shadow_tolerance (0..100) у максимально допустимий std_dev:
+        #   0   → 2.0  (майже ідеально рівний білий, дуже суворо)
+        #   50  → 16.0 (помірна допустимість)
+        #   100 → 30.0 (дозволяє помітні тіні)
+        shadow_tolerance = max(0, min(100, int(shadow_tolerance)))
+        max_shadow_std = 2.0 + shadow_tolerance * 0.28
+
+        bottom_std = stats["bottom"]["std_v"]
+        avg_perimeter_std = float(np.mean([st["std_v"] for st in stats.values()]))
+
+        if bottom_std > max_shadow_std:
+            return True, (
+                f"Тінь внизу (std={bottom_std:.1f}, поріг={max_shadow_std:.1f})"
+            )
+
+        # Для перевірки по всьому периметру використовується поріг на 20% вищий,
+        # ніж для нижньої смуги: нижня зона є найпріоритетнішою (тіні під товаром),
+        # тому вимагає суворішого контролю; загальний периметр може мати трохи
+        # більшу природну варіацію (наприклад, краї рамки з обох боків).
+        PERIMETER_MULTIPLIER = 1.2
+        if avg_perimeter_std > max_shadow_std * PERIMETER_MULTIPLIER:
+            return True, (
+                f"Тінь на периметрі (avg_std={avg_perimeter_std:.1f}, "
+                f"поріг={max_shadow_std * PERIMETER_MULTIPLIER:.1f})"
+            )
+
+        return False, "OK"
+
+    except Exception as e:
+        return False, str(e)
+
+
+# Зворотна сумісність: стара функція залишається доступною
+def detect_shadows_on_bg(pil_image, shadow_std_dev_threshold=15.0):
+    """
+    [ЗАСТАРІЛО] Виявляє брудний фон, аналізуючи верхні 10% кадру.
+    Використовуйте check_first_photo_bg() для нових проектів.
+    """
+    try:
         img = np.array(pil_image)
         if len(img.shape) == 2: img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         elif img.shape[2] == 4: img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
         elif img.shape[2] == 3: img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
         h, w = img.shape[:2]
-        
-        # Аналізуємо верхні 10%
-        strip_h = int(h * 0.10) 
+
+        strip_h = int(h * 0.10)
         if strip_h < 5: strip_h = 5
         top_strip = img[0:strip_h, :]
-        
-        # Зразок центру
+
         cy, cx = h // 2, w // 2
         sample_h, sample_w = int(h * 0.1), int(w * 0.1)
         if sample_h < 5: sample_h = 5
         if sample_w < 5: sample_w = 5
         center_sample = img[cy-sample_h:cy+sample_h, cx-sample_w:cx+sample_w]
 
-        # --- ЕТАП 1: Базові перевірки (Колір, Темрява) ---
         hsv_strip = cv2.cvtColor(top_strip, cv2.COLOR_BGR2HSV)
         mean_s = np.mean(hsv_strip[:, :, 1])
         mean_v = np.mean(hsv_strip[:, :, 2])
-        
-        # Кольоровий товар
+
         if mean_s > 15: return False, f"OK (Кольоровий: S={mean_s:.1f})"
-        # Дуже темний верх (суцільний чорний чохол без дірок)
         if mean_v < 60: return False, f"OK (Темний: V={mean_v:.1f})"
 
-        # --- ЕТАП 2: Порівняння з центром ---
         mean_top_bgr = np.mean(top_strip, axis=(0, 1))
         mean_cen_bgr = np.mean(center_sample, axis=(0, 1))
         color_diff = np.linalg.norm(mean_top_bgr - mean_cen_bgr)
-        
-        # Якщо верх схожий на центр - це товар на весь кадр
+
         if color_diff < 25: return False, f"OK (Товар на весь екран, diff={color_diff:.1f})"
 
-        # --- ЕТАП 3: Статистика шуму та яскравості ---
         gray_strip = cv2.cvtColor(top_strip, cv2.COLOR_BGR2GRAY)
         std_dev = np.std(gray_strip)
         mean_brightness = np.mean(gray_strip)
 
-        # 3.1: Ідеально білий фон
         if mean_brightness > 250: return False, "OK"
 
-        # --- ЕТАП 4: Спец-перевірки для складних випадків (NEW) ---
-        
-        # A. Перевірка кутів (Corner Check)
-        # Якщо в самих куточках чисто біле - значить фон вибитий в біле (High Key),
-        # а все що між кутами (дірки, камери) - це товар.
-        tl_corner = gray_strip[0:10, 0:10] # Top-Left
-        tr_corner = gray_strip[0:10, -10:] # Top-Right
+        tl_corner = gray_strip[0:10, 0:10]
+        tr_corner = gray_strip[0:10, -10:]
         avg_corners = (np.mean(tl_corner) + np.mean(tr_corner)) / 2
-        
+
         if avg_corners > 245:
-             return False, "OK (Білі кути)"
+            return False, "OK (Білі кути)"
 
-        # B. Перевірка на різкий контраст (High Contrast Exception)
-        # Тіні/Бруд дають std_dev ~ 15-30.
-        # Чорний чохол на білому фоні дає std_dev > 50 (через різку різницю 0 vs 255).
         if std_dev > 45.0:
-             return False, f"OK (Контрастний об'єкт: std={std_dev:.1f})"
+            return False, f"OK (Контрастний об'єкт: std={std_dev:.1f})"
 
-        # --- ЕТАП 5: Фінальний вердикт ---
-        
-        # Чистий сірий фон (плашка)
         if mean_brightness < 240 and std_dev < 5.0:
-             # Можна повернути True, якщо сірий фон заборонений
-             return False, f"OK (Рівний сірий: {mean_brightness:.1f})" 
+            return False, f"OK (Рівний сірий: {mean_brightness:.1f})"
 
-        # Бруд/Тіні
         if std_dev > shadow_std_dev_threshold:
             return True, f"Тіні/Шум (std={std_dev:.1f})"
-        
-        # Просто темно
+
         if mean_brightness < 200:
-             return True, f"Сірий фон ({mean_brightness:.1f})"
+            return True, f"Сірий фон ({mean_brightness:.1f})"
 
         return False, "OK"
 

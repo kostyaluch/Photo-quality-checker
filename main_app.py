@@ -184,17 +184,18 @@ class PhotoQualityGUI(tk.Tk):
         self.opt_shadows = tk.BooleanVar(value=opts.get("check_shadows", False))
         cb_shad = ttk.Checkbutton(opts_frame, text="Тіні / Брудний фон", variable=self.opt_shadows, style="Bold.TCheckbutton")
         cb_shad.grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        ToolTip(cb_shad, "Виявляє фотографії з тінями або забрудненим фоном. "
-                         "Аналізує рівномірність фону та наявність темних плям.")
+        ToolTip(cb_shad, "Перевіряє перше фото товару: фон має бути чисто білим (#FFFFFF), "
+                         "а тіні — мінімальними. Аналізує весь периметр (верх/низ/ліво/право).")
         f_shad = ttk.Frame(opts_frame)
         f_shad.grid(row=0, column=1, sticky="w")
-        ttk.Label(f_shad, text="Поріг:").pack(side="left")
-        self.shadow_thresh = tk.DoubleVar(value=self.conf.get("shadow_threshold", 10.0))
-        sc_shad = tk.Scale(f_shad, from_=5.0, to=30.0, resolution=1.0, orient="horizontal", variable=self.shadow_thresh, length=80)
+        ttk.Label(f_shad, text="Допуск тіней:").pack(side="left")
+        self.shadow_thresh = tk.IntVar(value=int(self.conf.get("shadow_threshold", 50)))
+        sc_shad = tk.Scale(f_shad, from_=0, to=100, resolution=1, orient="horizontal", variable=self.shadow_thresh, length=100)
         sc_shad.pack(side="left")
-        ToolTip(sc_shad, "Чутливість виявлення тіней (5–30). "
-                         "Менше значення — суворіша перевірка (більше спрацьовувань). "
-                         "Більше значення — ігнорує незначні відхилення фону.")
+        ToolTip(sc_shad, "Допуск тіней на першому фото (0–100).\n"
+                         "0 = суворо: майже ідеально білий фон, тіні заборонені.\n"
+                         "100 = м'яко: допускаються помітні природні тіні.\n"
+                         "Рекомендовано: 30–50 для Rozetka.")
 
         # Row 1
         self.opt_borders = tk.BooleanVar(value=opts.get("check_borders", True))

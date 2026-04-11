@@ -15,7 +15,7 @@ from utils import (
 )
 from image_metrics import (
     pil_from_bytes, compute_sharpness_pil, detect_white_borders,
-    detect_shadows_on_bg, analyze_text_content, detect_urls_from_text,
+    check_first_photo_bg, analyze_text_content, detect_urls_from_text,
     detect_qr_codes, detect_watermark_advanced, analyze_and_classify_photo,
     detect_transparency_in_bytes, detect_1px_border
 )
@@ -110,13 +110,13 @@ def photo_worker_sync(task_data, conf, data):
             important_log.append("Прозорий фон")
 
         if options.get("check_shadows") and photo_index == 1:
-            shadow_thresh = conf.get("shadow_threshold", 10.0)
-            has_shadows, reason = detect_shadows_on_bg(
-                img, shadow_std_dev_threshold=shadow_thresh
+            shadow_tolerance = int(conf.get("shadow_threshold", 50))
+            has_problem, reason = check_first_photo_bg(
+                img, shadow_tolerance=shadow_tolerance
             )
-            metrics_results["has_shadows"] = has_shadows
+            metrics_results["has_shadows"] = has_problem
             metrics_results["shadows_reason"] = reason
-            if has_shadows:
+            if has_problem:
                 details["Тіні на головному фото"] = "Так"
                 important_log.append(f"Тіні ({reason})")
 

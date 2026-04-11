@@ -14,7 +14,7 @@
   "concurrency": 8,
   "last_manual_column": "goods_images_url",
   "border_ratio": 0.15,
-  "shadow_threshold": 5.0,
+  "shadow_threshold": 50,
   "options": {
     "check_logos": false,
     "check_rus_text": true,
