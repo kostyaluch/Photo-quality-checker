@@ -4,7 +4,9 @@ import os
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from io import BytesIO
 import pandas as pd
+from PIL import Image, ImageTk
 from utils import load_config, save_config, clear_cache_dir, ensure_cache_dir, DEFAULT_CONFIG, format_duration
 from processing_engine import process_file
 from image_metrics import resource_path
@@ -508,17 +510,22 @@ class PhotoQualityGUI(tk.Tk):
         return frame
 
     def _build_preview_card(self, parent):
-        """Preview placeholder – Canvas hook for future photo preview integration."""
+        """Photo preview card – shows the first photo of each product during processing."""
         card = ttk.LabelFrame(parent, text="Превʼю фото",
                               style="Card.TLabelframe", padding=(8, 6))
 
-        # Canvas placeholder; replace with a PIL PhotoImage in a future version
         self.preview_canvas = tk.Canvas(card, bg="#E8EFF5", height=185,
                                         highlightthickness=1,
                                         highlightbackground=_C_BORDER)
         self.preview_canvas.pack(fill="x")
+        # Keep a reference to prevent garbage collection of the PhotoImage
+        self._preview_photo = None
 
         def _draw_placeholder(event=None):
+            if self._preview_photo is not None:
+                # A real image is shown; re-centre it on resize
+                self._redraw_preview_image()
+                return
             c = self.preview_canvas
             c.delete("ph")
             w = c.winfo_width() or _PREVIEW_FALLBACK_W
@@ -526,16 +533,42 @@ class PhotoQualityGUI(tk.Tk):
             c.create_text(w // 2, h // 2 - 14,
                           text="🖼", font=("Segoe UI", 26), fill="#B0BEC5", tags="ph")
             c.create_text(w // 2, h // 2 + 20,
-                          text="Превʼю першого фото",
+                          text="Превʼю першого фото товару",
                           font=_FONT_SMALL, fill="#90A4AE", tags="ph")
-            c.create_text(w // 2, h // 2 + 38,
-                          text="(буде реалізовано в майбутній версії)",
-                          font=("Segoe UI", 8), fill="#B0BEC5", tags="ph")
 
         self.preview_canvas.bind("<Configure>", _draw_placeholder)
         self.after(100, _draw_placeholder)   # draw once layout has settled
 
         return card
+
+    def _redraw_preview_image(self):
+        """Re-centre the current preview image after a canvas resize."""
+        c = self.preview_canvas
+        c.delete("all")
+        if self._preview_photo is None:
+            return
+        w = c.winfo_width() or _PREVIEW_FALLBACK_W
+        h = c.winfo_height() or _PREVIEW_FALLBACK_H
+        c.create_image(w // 2, h // 2, anchor="center",
+                       image=self._preview_photo, tags="img")
+
+    def update_preview(self, image_data: bytes):
+        """Display image_data (raw bytes) in the preview canvas, scaled to fit."""
+        try:
+            img = Image.open(BytesIO(image_data))
+            img = img.convert("RGB")
+
+            c = self.preview_canvas
+            cw = c.winfo_width() or _PREVIEW_FALLBACK_W
+            ch = c.winfo_height() or _PREVIEW_FALLBACK_H
+
+            # Scale to fit canvas while preserving aspect ratio
+            img.thumbnail((cw, ch), Image.LANCZOS)
+
+            self._preview_photo = ImageTk.PhotoImage(img)
+            self._redraw_preview_image()
+        except (OSError, SyntaxError, ValueError):
+            pass  # Ignore unreadable or corrupt image data
 
     def _build_log_card(self, parent):
         """Progress bar + status label + live-searchable log text area."""
@@ -563,6 +596,29 @@ class PhotoQualityGUI(tk.Tk):
         se = ttk.Entry(srow, textvariable=self._log_search_var)
         se.pack(side="left", fill="x", expand=True)
         ToolTip(se, "Пошук у лозі — підсвічує всі збіги в реальному часі.")
+
+        # Explicit paste binding so Ctrl+V and right-click → Paste always work
+        def _paste_to_search(event=None):
+            try:
+                text = se.clipboard_get()
+                se.insert("insert", text)
+            except tk.TclError:
+                pass
+            return "break"
+
+        def _show_search_context_menu(event):
+            menu = tk.Menu(se, tearoff=0)
+            menu.add_command(label="Вставити", command=_paste_to_search)
+            menu.add_command(label="Копіювати", command=lambda: se.event_generate("<<Copy>>"))
+            menu.add_command(label="Вирізати", command=lambda: se.event_generate("<<Cut>>"))
+            menu.add_separator()
+            menu.add_command(label="Виділити все",
+                             command=lambda: se.select_range(0, "end"))
+            menu.tk_popup(event.x_root, event.y_root)
+
+        se.bind("<Control-v>", _paste_to_search)
+        se.bind("<Control-V>", _paste_to_search)
+        se.bind("<Button-3>", _show_search_context_menu)
         clr_btn = ttk.Button(srow, text="✕", width=2,
                              command=lambda: self._log_search_var.set(""),
                              style="Secondary.TButton")
@@ -742,9 +798,10 @@ class PhotoQualityGUI(tk.Tk):
                 # val = (processed_count, total_count, eta_seconds)
                 done, total, eta_sec = val
                 self.progress["value"] = done
-                
                 eta_str = format_duration(eta_sec)
                 self.progress_label_var.set(f"{done} / {total} | ETA: {eta_str}")
+            elif cmd == "preview_image":
+                self.update_preview(val)
             return
         self.log_text.configure(state="normal")
         self.log_text.insert("end", str(msg) + "\n")
