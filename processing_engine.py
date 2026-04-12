@@ -455,6 +455,10 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
                 base["Debug Info"] = str(err)
                 return base, f"[ID:{product_id}] ⚠️ Помилка завантаження: {err}"
 
+            # Надсилаємо перше фото кожного товару як превʼю в GUI
+            if photo_index == 1 and gui_callback:
+                gui_callback(("preview_image", data))
+
             # Аналіз зображення (CPU-bound, у пулі потоків)
             try:
                 result = await loop.run_in_executor(
