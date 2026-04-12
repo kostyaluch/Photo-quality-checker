@@ -9,7 +9,37 @@ from utils import load_config, save_config, clear_cache_dir, ensure_cache_dir, D
 from processing_engine import process_file
 from image_metrics import resource_path
 
+# ── Design tokens ──────────────────────────────────────────────────────────────
+# Light theme palette – change here to restyle the whole app.
+_C_BG         = "#F1F5F9"   # Window background (light blue-grey)
+_C_SURFACE    = "#FFFFFF"   # Card / panel surface
+_C_BORDER     = "#CBD5E1"   # Separator and border colour
+_C_PRIMARY    = "#2563EB"   # Primary action (Run button)
+_C_PRIMARY_FG = "#FFFFFF"   # Text on primary button
+_C_TEXT       = "#1E293B"   # Main body text
+_C_MUTED      = "#64748B"   # Secondary / hint text
+_C_SUCCESS    = "#16A34A"   # Good / OK colour
+_C_ERROR      = "#DC2626"   # Bad / Problem colour
+_C_LOG_BG     = "#F8FAFC"   # Log widget background
+_C_LOG_FG     = "#334155"   # Log widget foreground
+_C_TOOLTIP_BG = "#FFF9E6"   # Tooltip background
+_C_SEARCH_HL  = "#FEF08A"   # Search-match highlight in the log
+
+_FONT_BODY    = ("Segoe UI", 10)
+_FONT_BOLD    = ("Segoe UI", 10, "bold")
+_FONT_HEADING = ("Segoe UI", 11, "bold")
+_FONT_SMALL   = ("Segoe UI", 9)
+_FONT_LOG     = ("Consolas", 9)
+
+# Fallback canvas dimensions used before the preview widget is realized
+_PREVIEW_FALLBACK_W = 320
+_PREVIEW_FALLBACK_H = 185
+# ───────────────────────────────────────────────────────────────────────────────
+
+
 class ToolTip(object):
+    """Lightweight tooltip shown on mouse-enter after a short delay."""
+
     def __init__(self, widget, text='widget info'):
         self.waittime = 500
         self.wraplength = 320
@@ -19,15 +49,19 @@ class ToolTip(object):
         self.widget.bind("<Leave>", self.leave)
         self.id = None
         self.tw = None
+
     def enter(self, event=None): self.schedule()
     def leave(self, event=None): self.unschedule(); self.hidetip()
+
     def schedule(self):
         self.unschedule()
         self.id = self.widget.after(self.waittime, self.showtip)
+
     def unschedule(self):
         id = self.id
         self.id = None
         if id: self.widget.after_cancel(id)
+
     def showtip(self, event=None):
         widget = self.widget
         try:
@@ -39,9 +73,9 @@ class ToolTip(object):
         self.tw = tk.Toplevel(widget)
         self.tw.wm_overrideredirect(True)
         label = tk.Label(self.tw, text=self.text, justify='left',
-                         background="#fffbe6", foreground="#333333",
+                         background=_C_TOOLTIP_BG, foreground="#333333",
                          relief='solid', borderwidth=1,
-                         font=('Helvetica', 9),
+                         font=('Segoe UI', 9),
                          wraplength=self.wraplength,
                          padx=6, pady=4)
         label.pack()
@@ -52,248 +86,522 @@ class ToolTip(object):
         if x + tw_w > sw:
             x = sw - tw_w - 5
         self.tw.wm_geometry("+%d+%d" % (x, y))
+
     def hidetip(self):
         tw = self.tw
         self.tw = None
         if tw: tw.destroy()
+
 
 class PhotoQualityGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Photo Quality Checker")
         self.iconbitmap(resource_path("PQC_logo.ico"))
-        self.geometry("800x850")
+        # Wider window to accommodate the two-column layout
+        self.geometry("1140x720")
+        self.minsize(900, 600)
         self.resizable(True, True)
         self.conf = load_config()
         ensure_cache_dir()
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.processing_thread = None
-        # Стан обробки: 'idle' | 'running' | 'paused'
+        # Processing state: 'idle' | 'running' | 'paused'
         self._proc_state = "idle"
-        # Посилання на asyncio-цикл та asyncio.Event (задаються у thread_target)
+        # References to asyncio loop and asyncio.Event (set in thread_target)
         self._async_loop = None
         self._async_pause_event = None
         self.create_widgets()
 
-    def create_widgets(self):
-        style = ttk.Style()
-        style.configure("Bold.TCheckbutton", font=('Helvetica', 10, 'bold'))
-        style.configure("Header.TLabel", font=('Helvetica', 9, 'bold'))
+    # ── Widget construction ────────────────────────────────────────────────────
 
-        # --- 1. Джерело ---
-        top_frame = ttk.LabelFrame(self, text="1. Джерело даних")
-        top_frame.pack(fill="x", padx=10, pady=5)
-        f_inner = ttk.Frame(top_frame)
-        f_inner.pack(fill="x", padx=5, pady=5)
-        ttk.Label(f_inner, text="Excel файл:").pack(side="left")
+    def create_widgets(self):
+        """Entry-point: configure styles, then build the two-column layout."""
+        self._setup_styles()
+        self.configure(bg=_C_BG)
+
+        # Two-column grid: left column (controls), right column (preview + log)
+        self.columnconfigure(0, weight=3, minsize=510)
+        self.columnconfigure(1, weight=2, minsize=380)
+        self.rowconfigure(0, weight=1)
+
+        left = self._build_left_panel(self)
+        left.grid(row=0, column=0, sticky="nsew", padx=(12, 6), pady=12)
+
+        right = self._build_right_panel(self)
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 12), pady=12)
+
+    def _setup_styles(self):
+        """Configure ttk styles for the modern light theme."""
+        s = ttk.Style()
+        # "clam" allows background/foreground customisation on most platforms
+        s.theme_use("clam")
+
+        # ── Base defaults ──
+        s.configure(".", font=_FONT_BODY, background=_C_BG, foreground=_C_TEXT,
+                    bordercolor=_C_BORDER, troughcolor=_C_BORDER)
+        s.configure("TFrame",    background=_C_BG)
+        s.configure("TLabel",    background=_C_BG, foreground=_C_TEXT)
+        s.configure("TSeparator", background=_C_BORDER)
+
+        # ── Card surface (white panels) ──
+        s.configure("Card.TFrame",  background=_C_SURFACE)
+        s.configure("Card.TLabel",  background=_C_SURFACE, foreground=_C_TEXT)
+        s.configure("Muted.TLabel", background=_C_SURFACE, foreground=_C_MUTED,
+                    font=_FONT_SMALL)
+
+        # Column headers for the metrics table
+        s.configure("ColHead.TLabel", background=_C_SURFACE, foreground=_C_MUTED,
+                    font=("Segoe UI", 9, "bold"))
+        s.configure("ColGood.TLabel", background=_C_SURFACE, foreground=_C_SUCCESS,
+                    font=("Segoe UI", 9, "bold"))
+        s.configure("ColBad.TLabel",  background=_C_SURFACE, foreground=_C_ERROR,
+                    font=("Segoe UI", 9, "bold"))
+
+        # ── Card-style LabelFrame ──
+        s.configure("Card.TLabelframe",
+                    background=_C_SURFACE, relief="flat",
+                    bordercolor=_C_BORDER, borderwidth=1)
+        s.configure("Card.TLabelframe.Label",
+                    background=_C_SURFACE, foreground=_C_TEXT, font=_FONT_BOLD)
+
+        # ── Checkbutton on white card surface ──
+        s.configure("Card.TCheckbutton",
+                    background=_C_SURFACE, foreground=_C_TEXT, font=_FONT_BODY)
+        s.map("Card.TCheckbutton",
+              background=[("active", _C_SURFACE)])
+
+        # ── Primary action button (Run) ──
+        s.configure("Primary.TButton",
+                    background=_C_PRIMARY, foreground=_C_PRIMARY_FG,
+                    font=("Segoe UI", 11, "bold"), padding=(14, 9),
+                    relief="flat", borderwidth=0, anchor="center")
+        s.map("Primary.TButton",
+              background=[("active", "#1D4ED8"), ("disabled", "#93C5FD")],
+              foreground=[("disabled", "#DBEAFE"), ("active", _C_PRIMARY_FG)])
+
+        # ── Secondary buttons (Stop, utilities) ──
+        s.configure("Secondary.TButton",
+                    background=_C_SURFACE, foreground=_C_TEXT,
+                    font=_FONT_BODY, padding=(8, 5),
+                    relief="flat", borderwidth=1, bordercolor=_C_BORDER)
+        s.map("Secondary.TButton",
+              background=[("active", "#F1F5F9"), ("disabled", _C_SURFACE)],
+              foreground=[("disabled", _C_MUTED)])
+
+        # ── Progress bar ──
+        s.configure("Accent.Horizontal.TProgressbar",
+                    troughcolor=_C_BORDER, background=_C_PRIMARY,
+                    bordercolor=_C_BORDER, thickness=8)
+
+        # ── Entry and Combobox ──
+        s.configure("TEntry",    fieldbackground=_C_SURFACE,
+                    foreground=_C_TEXT, insertcolor=_C_TEXT)
+        s.configure("TCombobox", fieldbackground=_C_SURFACE,
+                    foreground=_C_TEXT, background=_C_SURFACE)
+
+    # ── Left panel ─────────────────────────────────────────────────────────────
+
+    def _build_left_panel(self, parent):
+        """Left column: data source → metrics → additional checks → launch."""
+        frame = ttk.Frame(parent)
+        frame.columnconfigure(0, weight=1)
+        self._build_source_card(frame).pack(fill="x", pady=(0, 8))
+        self._build_metrics_card(frame).pack(fill="x", pady=(0, 8))
+        self._build_options_card(frame).pack(fill="x", pady=(0, 8))
+        self._build_launch_card(frame).pack(fill="x")
+        return frame
+
+    def _build_source_card(self, parent):
+        """Card ① – data source (file path + column selector)."""
+        card = ttk.LabelFrame(parent, text="①  Джерело даних",
+                              style="Card.TLabelframe", padding=10)
+
+        # File row
+        row1 = ttk.Frame(card, style="Card.TFrame")
+        row1.pack(fill="x", pady=(0, 6))
+        ttk.Label(row1, text="Файл:", style="Card.TLabel").pack(side="left")
         self.file_path_var = tk.StringVar()
-        file_entry = ttk.Entry(f_inner, textvariable=self.file_path_var)
-        file_entry.pack(side="left", fill="x", expand=True, padx=5)
-        ToolTip(file_entry, "Шлях до Excel (.xlsx/.xls) або CSV-файлу з даними про товари. "
-                            "Можна ввести вручну або натиснути «Огляд…».")
-        browse_btn = ttk.Button(f_inner, text="Огляд...", command=self.browse_file)
+        fe = ttk.Entry(row1, textvariable=self.file_path_var)
+        fe.pack(side="left", fill="x", expand=True, padx=(6, 4))
+        ToolTip(fe, "Шлях до Excel (.xlsx/.xls) або CSV-файлу з даними про товари. "
+                    "Можна ввести вручну або натиснути «Огляд…».")
+        browse_btn = ttk.Button(row1, text="Огляд…", command=self.browse_file,
+                                style="Secondary.TButton")
         browse_btn.pack(side="left")
         ToolTip(browse_btn, "Відкрити діалог вибору файлу Excel або CSV.")
-        c_inner = ttk.Frame(top_frame)
-        c_inner.pack(fill="x", padx=5, pady=5)
-        ttk.Label(c_inner, text="Колонка з посиланнями:").pack(side="left")
-        self.col_combo = ttk.Combobox(c_inner, values=[], width=40, state="readonly")
-        self.col_combo.pack(side="left", padx=5)
+
+        # Column row
+        row2 = ttk.Frame(card, style="Card.TFrame")
+        row2.pack(fill="x")
+        ttk.Label(row2, text="Колонка:", style="Card.TLabel").pack(side="left")
+        self.col_combo = ttk.Combobox(row2, values=[], width=36, state="readonly")
+        self.col_combo.pack(side="left", padx=(6, 0))
         self.col_combo.bind("<<ComboboxSelected>>", self.on_column_selected)
-        ToolTip(self.col_combo, "Оберіть колонку, яка містить URL-адреси або шляхи до зображень. "
-                                "Програма автоматично визначає найбільш відповідну колонку після завантаження файлу.")
+        ToolTip(self.col_combo,
+                "Оберіть колонку, яка містить URL-адреси або шляхи до зображень. "
+                "Програма автоматично визначає найбільш відповідну колонку після завантаження файлу.")
 
+        return card
 
-        # --- 2. Метрики ---
-        metrics_frame = ttk.LabelFrame(self, text="2. Вимоги до якості")
-        metrics_frame.pack(fill="x", padx=10, pady=5)
-        grid_f = ttk.Frame(metrics_frame)
-        grid_f.pack(fill="x", padx=5, pady=5)
-        
-        ttk.Label(grid_f, text="Параметр", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        good_lbl = ttk.Label(grid_f, text="Хороше ✔", style="Header.TLabel", foreground="green")
+    def _build_metrics_card(self, parent):
+        """Card ② – quality thresholds (good/bad values + logic operators)."""
+        card = ttk.LabelFrame(parent, text="②  Вимоги до якості",
+                              style="Card.TLabelframe", padding=10)
+        g = ttk.Frame(card, style="Card.TFrame")
+        g.pack(fill="x")
+        g.columnconfigure(0, weight=1)
+
+        # Header row
+        ttk.Label(g, text="Параметр",  style="ColHead.TLabel").grid(
+            row=0, column=0, sticky="w")
+        good_lbl = ttk.Label(g, text="✔  Хороше", style="ColGood.TLabel")
         good_lbl.grid(row=0, column=1, padx=10)
         ToolTip(good_lbl, "Мінімальне значення, яке вважається прийнятним. "
                           "Зображення з показниками ≥ цього порогу отримають позначку «Добре».")
-        ttk.Label(grid_f, text="Логіка з'єднання:", font=("Arial", 8, "italic")).grid(row=0, column=2)
-        bad_lbl = ttk.Label(grid_f, text="Погане ✘", style="Header.TLabel", foreground="red")
+        ttk.Label(g, text="Логіка", style="ColHead.TLabel").grid(
+            row=0, column=2, padx=6)
+        bad_lbl = ttk.Label(g, text="✘  Погане", style="ColBad.TLabel")
         bad_lbl.grid(row=0, column=3, padx=10)
         ToolTip(bad_lbl, "Максимальне значення, нижче якого зображення вважається поганим. "
                          "Зображення з показниками ≤ цього порогу отримають позначку «Погано».")
 
-        width_lbl = ttk.Label(grid_f, text="Ширина (px):")
-        width_lbl.grid(row=1, column=0, sticky="w", pady=2)
-        ToolTip(width_lbl, "Горизонтальний розмір зображення у пікселях.")
+        ttk.Separator(g, orient="horizontal").grid(
+            row=1, column=0, columnspan=4, sticky="ew", pady=(4, 6))
+
+        # Width
+        wl = ttk.Label(g, text="Ширина (px):", style="Card.TLabel")
+        wl.grid(row=2, column=0, sticky="w", pady=2)
+        ToolTip(wl, "Горизонтальний розмір зображення у пікселях.")
         self.good_w = tk.IntVar(value=self.conf["good"]["width"])
-        good_w_entry = ttk.Entry(grid_f, textvariable=self.good_w, width=8)
-        good_w_entry.grid(row=1, column=1)
-        ToolTip(good_w_entry, "Мінімальна ширина (px) для «хорошого» зображення. Наприклад: 800.")
+        gwe = ttk.Entry(g, textvariable=self.good_w, width=8)
+        gwe.grid(row=2, column=1, padx=4)
+        ToolTip(gwe, "Мінімальна ширина (px) для «хорошого» зображення. Наприклад: 800.")
         self.bad_w = tk.IntVar(value=self.conf["bad"]["width"])
-        bad_w_entry = ttk.Entry(grid_f, textvariable=self.bad_w, width=8)
-        bad_w_entry.grid(row=1, column=3)
-        ToolTip(bad_w_entry, "Максимальна ширина (px) для «поганого» зображення. Наприклад: 400.")
+        bwe = ttk.Entry(g, textvariable=self.bad_w, width=8)
+        bwe.grid(row=2, column=3, padx=4)
+        ToolTip(bwe, "Максимальна ширина (px) для «поганого» зображення. Наприклад: 400.")
 
+        # Logic operators (sit between Width and Height rows)
         self.good_logic_op = tk.StringVar(value=self.conf.get("good_logic_operator", "АБО"))
-        op_cb_good = ttk.Combobox(grid_f, textvariable=self.good_logic_op, values=["І", "АБО"], width=5, state="readonly")
-        op_cb_good.grid(row=2, column=1)
-        ToolTip(op_cb_good, "«І» — зображення хороше, тільки якщо ширина І висота відповідають порогу.\n"
-                            "«АБО» — достатньо, щоб хоча б один з параметрів відповідав.")
-        
-        ttk.Label(grid_f, text="<--- (Ширина ? Висота) --->", font=("Arial", 7), foreground="gray").grid(row=2, column=2)
-        
+        og = ttk.Combobox(g, textvariable=self.good_logic_op,
+                          values=["І", "АБО"], width=5, state="readonly")
+        og.grid(row=3, column=1, pady=2, padx=4)
+        ToolTip(og, "«І» — зображення хороше, якщо ширина І висота відповідають порогу.\n"
+                    "«АБО» — достатньо, щоб хоча б один параметр відповідав.")
+        ttk.Label(g, text="← Ш / В →", style="Muted.TLabel").grid(
+            row=3, column=2, padx=4)
         self.bad_logic_op = tk.StringVar(value=self.conf.get("bad_logic_operator", "І"))
-        op_cb_bad = ttk.Combobox(grid_f, textvariable=self.bad_logic_op, values=["І", "АБО"], width=5, state="readonly")
-        op_cb_bad.grid(row=2, column=3)
-        ToolTip(op_cb_bad, "«І» — зображення погане, тільки якщо ширина І висота нижче порогу.\n"
-                           "«АБО» — достатньо, щоб хоча б один параметр був нижче порогу.")
+        ob = ttk.Combobox(g, textvariable=self.bad_logic_op,
+                          values=["І", "АБО"], width=5, state="readonly")
+        ob.grid(row=3, column=3, pady=2, padx=4)
+        ToolTip(ob, "«І» — зображення погане, якщо ширина І висота нижче порогу.\n"
+                    "«АБО» — достатньо, щоб хоча б один параметр був нижче порогу.")
 
-        height_lbl = ttk.Label(grid_f, text="Висота (px):")
-        height_lbl.grid(row=3, column=0, sticky="w", pady=2)
-        ToolTip(height_lbl, "Вертикальний розмір зображення у пікселях.")
+        # Height
+        hl = ttk.Label(g, text="Висота (px):", style="Card.TLabel")
+        hl.grid(row=4, column=0, sticky="w", pady=2)
+        ToolTip(hl, "Вертикальний розмір зображення у пікселях.")
         self.good_h = tk.IntVar(value=self.conf["good"]["height"])
-        good_h_entry = ttk.Entry(grid_f, textvariable=self.good_h, width=8)
-        good_h_entry.grid(row=3, column=1)
-        ToolTip(good_h_entry, "Мінімальна висота (px) для «хорошого» зображення. Наприклад: 800.")
+        ghe = ttk.Entry(g, textvariable=self.good_h, width=8)
+        ghe.grid(row=4, column=1, padx=4)
+        ToolTip(ghe, "Мінімальна висота (px) для «хорошого» зображення. Наприклад: 800.")
         self.bad_h = tk.IntVar(value=self.conf["bad"]["height"])
-        bad_h_entry = ttk.Entry(grid_f, textvariable=self.bad_h, width=8)
-        bad_h_entry.grid(row=3, column=3)
-        ToolTip(bad_h_entry, "Максимальна висота (px) для «поганого» зображення. Наприклад: 400.")
+        bhe = ttk.Entry(g, textvariable=self.bad_h, width=8)
+        bhe.grid(row=4, column=3, padx=4)
+        ToolTip(bhe, "Максимальна висота (px) для «поганого» зображення. Наприклад: 400.")
 
-        sharp_lbl = ttk.Label(grid_f, text="Різкість (Laplacian):")
-        sharp_lbl.grid(row=4, column=0, sticky="w", pady=5)
-        ToolTip(sharp_lbl, "Оцінка різкості за методом Лапласіана. "
-                           "Чим вище значення — тим чіткіше зображення. "
-                           "Розмиті фото мають низький показник (< 50–100).")
+        # Sharpness
+        sl = ttk.Label(g, text="Різкість (Laplacian):", style="Card.TLabel")
+        sl.grid(row=5, column=0, sticky="w", pady=(2, 0))
+        ToolTip(sl, "Оцінка різкості за методом Лапласіана. "
+                    "Чим вище значення — тим чіткіше зображення. "
+                    "Розмиті фото мають низький показник (< 50–100).")
         self.good_s = tk.DoubleVar(value=self.conf["good"]["sharpness"])
-        good_s_entry = ttk.Entry(grid_f, textvariable=self.good_s, width=8)
-        good_s_entry.grid(row=4, column=1)
-        ToolTip(good_s_entry, "Мінімальний показник різкості для «хорошого» фото. Наприклад: 80.")
+        gse = ttk.Entry(g, textvariable=self.good_s, width=8)
+        gse.grid(row=5, column=1, padx=4)
+        ToolTip(gse, "Мінімальний показник різкості для «хорошого» фото. Наприклад: 80.")
         self.bad_s = tk.DoubleVar(value=self.conf["bad"]["sharpness"])
-        bad_s_entry = ttk.Entry(grid_f, textvariable=self.bad_s, width=8)
-        bad_s_entry.grid(row=4, column=3)
-        ToolTip(bad_s_entry, "Максимальний показник різкості для «поганого» фото. Наприклад: 30.")
+        bse = ttk.Entry(g, textvariable=self.bad_s, width=8)
+        bse.grid(row=5, column=3, padx=4)
+        ToolTip(bse, "Максимальний показник різкості для «поганого» фото. Наприклад: 30.")
 
-        # --- 3. Опції ---
-        opts_frame = ttk.LabelFrame(self, text="3. Додаткові перевірки")
-        opts_frame.pack(fill="x", padx=10, pady=5)
-        opts = self.conf.get("options", DEFAULT_CONFIG["options"])
+        return card
 
-        # Row 0
-        self.opt_shadows = tk.BooleanVar(value=opts.get("check_shadows", False))
-        cb_shad = ttk.Checkbutton(opts_frame, text="Тіні / Брудний фон", variable=self.opt_shadows, style="Bold.TCheckbutton")
-        cb_shad.grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        ToolTip(cb_shad, "Перевіряє перше фото товару: фон має бути чисто білим (#FFFFFF), "
-                         "а тіні — мінімальними. Аналізує весь периметр (верх/низ/ліво/право).")
-        f_shad = ttk.Frame(opts_frame)
-        f_shad.grid(row=0, column=1, sticky="w")
-        ttk.Label(f_shad, text="Допуск тіней:").pack(side="left")
+    def _build_options_card(self, parent):
+        """Card ③ – additional checks: sliders with value labels + 2-col checkboxes."""
+        opts_cfg = self.conf.get("options", DEFAULT_CONFIG["options"])
+        card = ttk.LabelFrame(parent, text="③  Додаткові перевірки",
+                              style="Card.TLabelframe", padding=10)
+
+        # ── Slider rows ──────────────────────────────────────────────────────
+        sliders = ttk.Frame(card, style="Card.TFrame")
+        sliders.pack(fill="x", pady=(0, 6))
+        sliders.columnconfigure(2, weight=1)  # slider column stretches
+
+        # Shadows
+        self.opt_shadows = tk.BooleanVar(value=opts_cfg.get("check_shadows", False))
+        cb_s = ttk.Checkbutton(sliders, text="Тіні / Брудний фон",
+                               variable=self.opt_shadows, style="Card.TCheckbutton")
+        cb_s.grid(row=0, column=0, sticky="w")
+        ToolTip(cb_s, "Перевіряє перше фото товару: фон має бути чисто білим, "
+                      "а тіні — мінімальними. Аналізує весь периметр (верх/низ/ліво/право).")
+        ttk.Label(sliders, text="Допуск:", style="Muted.TLabel").grid(
+            row=0, column=1, sticky="e", padx=(8, 4))
         self.shadow_thresh = tk.IntVar(value=int(self.conf.get("shadow_threshold", 50)))
-        sc_shad = tk.Scale(f_shad, from_=0, to=100, resolution=1, orient="horizontal", variable=self.shadow_thresh, length=100)
-        sc_shad.pack(side="left")
-        ToolTip(sc_shad, "Допуск тіней на першому фото (0–100).\n"
-                         "0 = суворо: майже ідеально білий фон, тіні заборонені.\n"
-                         "100 = м'яко: допускаються помітні природні тіні.\n"
-                         "Рекомендовано: 30–50 для Rozetka.")
+        sc_s = tk.Scale(sliders, from_=0, to=100, resolution=1, orient="horizontal",
+                        variable=self.shadow_thresh, length=130, showvalue=0,
+                        bg=_C_SURFACE, fg=_C_TEXT, highlightthickness=0,
+                        troughcolor=_C_BORDER, sliderrelief="flat", bd=0)
+        sc_s.grid(row=0, column=2, sticky="ew", padx=(0, 4))
+        ToolTip(sc_s, "Допуск тіней на першому фото (0–100).\n"
+                      "0 = суворо: майже ідеально білий фон, тіні заборонені.\n"
+                      "100 = м'яко: допускаються помітні природні тіні.\n"
+                      "Рекомендовано: 30–70 для Rozetka.")
+        # Value label (auto-updates via textvariable)
+        ttk.Label(sliders, textvariable=self.shadow_thresh,
+                  style="Muted.TLabel", width=3, anchor="w").grid(
+            row=0, column=3, sticky="w")
 
-        # Row 1
-        self.opt_borders = tk.BooleanVar(value=opts.get("check_borders", True))
-        cb_bord = ttk.Checkbutton(opts_frame, text="Некадровані (білі поля)", variable=self.opt_borders, style="Bold.TCheckbutton")
-        cb_bord.grid(row=1, column=0, sticky="w", padx=10, pady=5)
-        ToolTip(cb_bord, "Виявляє зображення, де товар не займає весь кадр і навколо є надмірні білі поля.")
-        f_bord = ttk.Frame(opts_frame)
-        f_bord.grid(row=1, column=1, sticky="w")
-        ttk.Label(f_bord, text="Макс %:").pack(side="left")
+        # Borders
+        self.opt_borders = tk.BooleanVar(value=opts_cfg.get("check_borders", True))
+        cb_b = ttk.Checkbutton(sliders, text="Некадровані (білі поля)",
+                               variable=self.opt_borders, style="Card.TCheckbutton")
+        cb_b.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ToolTip(cb_b, "Виявляє зображення, де товар не займає весь кадр і навколо є надмірні білі поля.")
+        ttk.Label(sliders, text="Макс %:", style="Muted.TLabel").grid(
+            row=1, column=1, sticky="e", padx=(8, 4), pady=(6, 0))
         self.border_r = tk.DoubleVar(value=self.conf.get("border_ratio", 0.1))
-        self.border_percent = tk.DoubleVar(value=self.border_r.get() * 100)
-        def update_border_r(val): self.border_r.set(float(val) / 100.0)
-        sc_bord = tk.Scale(f_bord, from_=1, to=50, orient="horizontal", variable=self.border_percent, command=update_border_r, length=80)
-        sc_bord.pack(side="left")
-        ToolTip(sc_bord, "Максимально допустима частка білих полів від розміру зображення (1–50%). "
-                         "Наприклад, 10% означає, що поля не повинні перевищувати 10% ширини/висоти.")
+        self.border_percent = tk.DoubleVar(value=round(self.border_r.get() * 100))
+        def _upd_border_r(val): self.border_r.set(float(val) / 100.0)
+        sc_b = tk.Scale(sliders, from_=1, to=50, orient="horizontal",
+                        variable=self.border_percent, command=_upd_border_r, length=130,
+                        showvalue=0,
+                        bg=_C_SURFACE, fg=_C_TEXT, highlightthickness=0,
+                        troughcolor=_C_BORDER, sliderrelief="flat", bd=0)
+        sc_b.grid(row=1, column=2, sticky="ew", padx=(0, 4), pady=(6, 0))
+        ToolTip(sc_b, "Максимально допустима частка білих полів від розміру зображення (1–50%). "
+                      "Наприклад, 10% означає, що поля не повинні перевищувати 10% ширини/висоти.")
+        # Display as integer to avoid "10.0" formatting
+        # border_percent is a DoubleVar (e.g. 10.0); display as integer to avoid
+        # the ugly ".0" suffix that would appear in a plain textvariable label.
+        self._bord_disp = tk.StringVar(value=str(int(self.border_percent.get())))
+        def _upd_bord_disp(*_): self._bord_disp.set(str(int(self.border_percent.get())))
+        self.border_percent.trace_add("write", _upd_bord_disp)
+        ttk.Label(sliders, textvariable=self._bord_disp,
+                  style="Muted.TLabel", width=3, anchor="w").grid(
+            row=1, column=3, sticky="w", pady=(6, 0))
 
-        # Row 2
-        self.opt_logos = tk.BooleanVar(value=opts.get("check_logos", False))
-        cb_logos = ttk.Checkbutton(opts_frame, text="Логотипи Rozetka", variable=self.opt_logos, style="Bold.TCheckbutton")
-        cb_logos.grid(row=2, column=0, sticky="w", padx=10, pady=5)
-        ToolTip(cb_logos, "Виявляє логотипи або фірмові елементи Rozetka на зображенні. "
-                          "Такі фото, як правило, заборонені маркетплейсами.")
-        self.opt_watermark = tk.BooleanVar(value=opts.get("check_watermarks", False))
-        cb_wm = ttk.Checkbutton(opts_frame, text="Водяні знаки", variable=self.opt_watermark, style="Bold.TCheckbutton")
-        cb_wm.grid(row=2, column=1, sticky="w", padx=0, pady=5)
-        ToolTip(cb_wm, "Виявляє водяні знаки на фото за допомогою шаблонів із папки watermark_templates. "
-                       "Програма порівнює зображення лише з доданими шаблонами — інші водяні знаки не виявляються.")
+        # ── 2-column checkbox grid ────────────────────────────────────────────
+        ttk.Separator(card, orient="horizontal").pack(fill="x", pady=(0, 6))
+        cbox = ttk.Frame(card, style="Card.TFrame")
+        cbox.pack(fill="x")
+        cbox.columnconfigure(0, weight=1)
+        cbox.columnconfigure(1, weight=1)
 
-        # Row 3
-        self.opt_rus_text = tk.BooleanVar(value=opts.get("check_rus_text", False))
-        cb_rus = ttk.Checkbutton(opts_frame, text="Російський текст", variable=self.opt_rus_text, style="Bold.TCheckbutton")
-        cb_rus.grid(row=3, column=0, sticky="w", padx=10, pady=5)
-        ToolTip(cb_rus, "За допомогою OCR виявляє текст російською мовою на зображенні. "
-                        "Увага: ця перевірка може уповільнити обробку.")
-        self.opt_qr_url = tk.BooleanVar(value=opts.get("check_qr_url", False))
-        cb_qr = ttk.Checkbutton(opts_frame, text="URL / QR коди", variable=self.opt_qr_url, style="Bold.TCheckbutton")
-        cb_qr.grid(row=3, column=1, sticky="w", padx=0, pady=5)
-        ToolTip(cb_qr, "Виявляє QR-коди або текстові URL-адреси на зображенні.")
+        self.opt_logos = tk.BooleanVar(value=opts_cfg.get("check_logos", False))
+        cb_l = ttk.Checkbutton(cbox, text="Логотипи Rozetka",
+                               variable=self.opt_logos, style="Card.TCheckbutton")
+        cb_l.grid(row=0, column=0, sticky="w", pady=2)
+        ToolTip(cb_l, "Виявляє логотипи або фірмові елементи Rozetka на зображенні. "
+                      "Такі фото, як правило, заборонені маркетплейсами.")
 
-        # Row 4
-        self.opt_1px = tk.BooleanVar(value=opts.get("check_1px_border", False))
-        cb_1px = ttk.Checkbutton(opts_frame, text="Тонка рамка (1px)", variable=self.opt_1px, style="Bold.TCheckbutton")
-        cb_1px.grid(row=4, column=0, sticky="w", padx=10, pady=5)
-        ToolTip(cb_1px, "Виявляє чорні/темні рамки товщиною 1-2 пікселі по самому краю фото.")
+        self.opt_watermark = tk.BooleanVar(value=opts_cfg.get("check_watermarks", False))
+        cb_w = ttk.Checkbutton(cbox, text="Водяні знаки",
+                               variable=self.opt_watermark, style="Card.TCheckbutton")
+        cb_w.grid(row=0, column=1, sticky="w", pady=2)
+        ToolTip(cb_w, "Виявляє водяні знаки на фото за допомогою шаблонів із папки watermark_templates.")
 
-        # --- 4. Керування ---
-        ctrl_frame = ttk.LabelFrame(self, text="4. Запуск")
-        ctrl_frame.pack(fill="x", padx=10, pady=10)
-        f_flows = ttk.Frame(ctrl_frame)
-        f_flows.pack(side="left", padx=10)
-        ttk.Label(f_flows, text="Потоків:").pack(side="left")
+        self.opt_rus_text = tk.BooleanVar(value=opts_cfg.get("check_rus_text", False))
+        cb_r = ttk.Checkbutton(cbox, text="Російський текст",
+                               variable=self.opt_rus_text, style="Card.TCheckbutton")
+        cb_r.grid(row=1, column=0, sticky="w", pady=2)
+        ToolTip(cb_r, "За допомогою OCR виявляє текст російською мовою. "
+                      "Увага: ця перевірка може уповільнити обробку.")
+
+        self.opt_qr_url = tk.BooleanVar(value=opts_cfg.get("check_qr_url", False))
+        cb_q = ttk.Checkbutton(cbox, text="URL / QR коди",
+                               variable=self.opt_qr_url, style="Card.TCheckbutton")
+        cb_q.grid(row=1, column=1, sticky="w", pady=2)
+        ToolTip(cb_q, "Виявляє QR-коди або текстові URL-адреси на зображенні.")
+
+        self.opt_1px = tk.BooleanVar(value=opts_cfg.get("check_1px_border", False))
+        cb_p = ttk.Checkbutton(cbox, text="Тонка рамка (1px)",
+                               variable=self.opt_1px, style="Card.TCheckbutton")
+        cb_p.grid(row=2, column=0, sticky="w", pady=2)
+        ToolTip(cb_p, "Виявляє чорні/темні рамки товщиною 1-2 пікселі по самому краю фото.")
+
+        return card
+
+    def _build_launch_card(self, parent):
+        """Card ④ – launch controls: threads, primary Run button, secondary actions."""
+        card = ttk.LabelFrame(parent, text="④  Запуск",
+                              style="Card.TLabelframe", padding=(10, 8))
+
+        # Top row: threads selector + PRIMARY RUN/PAUSE button
+        top = ttk.Frame(card, style="Card.TFrame")
+        top.pack(fill="x", pady=(0, 8))
+        ttk.Label(top, text="Потоків:", style="Card.TLabel").pack(side="left")
         self.conc_var = tk.IntVar(value=self.conf.get("concurrency", 4))
-        self.conc_combo = ttk.Combobox(f_flows, textvariable=self.conc_var, values=[1, 2, 4, 8, 12, 16], width=3, state="readonly")
-        self.conc_combo.pack(side="left", padx=5)
-        ToolTip(self.conc_combo, "Кількість паралельних потоків для завантаження та обробки зображень. "
-                                 "Більше потоків — швидша обробка, але вища навантаженість мережі та CPU. "
-                                 "Рекомендовано: 4–8 для стандартних ПК.")
+        self.conc_combo = ttk.Combobox(top, textvariable=self.conc_var,
+                                       values=[1, 2, 4, 8, 12, 16], width=4, state="readonly")
+        self.conc_combo.pack(side="left", padx=(4, 12))
+        ToolTip(self.conc_combo,
+                "Кількість паралельних потоків для завантаження та обробки зображень. "
+                "Більше потоків — швидша обробка, але вища навантаженість мережі та CPU. "
+                "Рекомендовано: 4–8 для стандартних ПК.")
 
-        f_btns = ttk.Frame(ctrl_frame)
-        f_btns.pack(side="left", fill="x", expand=True)
-        # Єдина динамічна кнопка: «▶ Запустити» / «⏸ Пауза» / «▶ Продовжити»
-        self.run_pause_btn = ttk.Button(f_btns, text="▶ ЗАПУСТИТИ ОБРОБКУ", command=self._dynamic_btn_click)
-        self.run_pause_btn.pack(side="left", padx=5, fill="x", expand=True)
-        ToolTip(self.run_pause_btn, "Запустити обробку файлу. Під час роботи кнопка переключається між «Пауза» та «Продовжити».")
-        self.stop_btn = ttk.Button(f_btns, text="Стоп", command=self.stop_process, state="disabled")
-        self.stop_btn.pack(side="left", padx=5)
-        ToolTip(self.stop_btn, "Зупинити поточну обробку. Вже оброблені результати будуть збережені.")
+        # Dynamic button: «▶ Run» → «⏸ Pause» → «▶ Resume»
+        self.run_pause_btn = ttk.Button(top, text="▶  ЗАПУСТИТИ ОБРОБКУ",
+                                        command=self._dynamic_btn_click,
+                                        style="Primary.TButton")
+        self.run_pause_btn.pack(side="left", fill="x", expand=True)
+        ToolTip(self.run_pause_btn,
+                "Запустити обробку файлу. Під час роботи кнопка переключається "
+                "між «Пауза» та «Продовжити».")
 
-        f_utils = ttk.Frame(ctrl_frame)
-        f_utils.pack(side="right", padx=10)
-        folder_btn = ttk.Button(f_utils, text="📁 Папка", command=self.open_output_folder)
-        folder_btn.pack(side="left", padx=2)
-        ToolTip(folder_btn, "Відкрити папку з результатами останньої обробки у провіднику файлів.")
-        cache_btn = ttk.Button(f_utils, text="Очистити кеш", command=self.clear_cache_clicked)
-        cache_btn.pack(side="left", padx=2)
-        ToolTip(cache_btn, "Видалити локальний кеш завантажених зображень. "
-                           "Використовуйте, якщо зображення оновились і потрібно завантажити їх заново.")
-        reaggregate_btn = ttk.Button(f_utils, text="🔄 Реагрегація файлу", command=self.update_status_clicked)
-        reaggregate_btn.pack(side="left", padx=2)
-        ToolTip(reaggregate_btn, "Перерахувати підсумковий файл статусів на основі відредагованого файлу деталей. "
-                                 "Корисно, якщо ви вручну виправили статуси у файлі деталей і хочете оновити зведений звіт.")
+        # Bottom row: Stop + separator + utility buttons (secondary style)
+        bot = ttk.Frame(card, style="Card.TFrame")
+        bot.pack(fill="x")
 
-        # Прогрес
-        prog_frame = ttk.Frame(self)
-        prog_frame.pack(fill="x", padx=10)
-        self.progress = ttk.Progressbar(prog_frame, orient="horizontal", mode="determinate")
-        self.progress.pack(fill="x", pady=5)
-        self.progress_label_var = tk.StringVar(value="Очікування...")
-        ttk.Label(prog_frame, textvariable=self.progress_label_var).pack()
+        self.stop_btn = ttk.Button(bot, text="⬛ Стоп", command=self.stop_process,
+                                   state="disabled", style="Secondary.TButton")
+        self.stop_btn.pack(side="left", padx=(0, 4))
+        ToolTip(self.stop_btn,
+                "Зупинити поточну обробку. Вже оброблені результати будуть збережені.")
 
-        # Лог
-        log_frame = ttk.LabelFrame(self, text="Лог")
-        log_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        self.log_text = tk.Text(log_frame, wrap="word", state="disabled", height=10)
-        scrolly = ttk.Scrollbar(log_frame, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=scrolly.set)
-        self.log_text.pack(side="left", fill="both", expand=True)
-        scrolly.pack(side="right", fill="y")
+        ttk.Separator(bot, orient="vertical").pack(side="left", fill="y", padx=8, pady=2)
+
+        folder_btn = ttk.Button(bot, text="📁 Папка",
+                                command=self.open_output_folder, style="Secondary.TButton")
+        folder_btn.pack(side="left", padx=(0, 4))
+        ToolTip(folder_btn,
+                "Відкрити папку з результатами останньої обробки у провіднику файлів.")
+
+        cache_btn = ttk.Button(bot, text="🗑 Очистити кеш",
+                               command=self.clear_cache_clicked, style="Secondary.TButton")
+        cache_btn.pack(side="left", padx=(0, 4))
+        ToolTip(cache_btn,
+                "Видалити локальний кеш завантажених зображень. "
+                "Використовуйте, якщо зображення оновились і потрібно завантажити їх заново.")
+
+        reagg_btn = ttk.Button(bot, text="🔄 Реагрегація",
+                               command=self.update_status_clicked, style="Secondary.TButton")
+        reagg_btn.pack(side="left")
+        ToolTip(reagg_btn,
+                "Перерахувати підсумковий файл статусів на основі відредагованого файлу деталей. "
+                "Корисно, якщо ви вручну виправили статуси у файлі деталей і хочете оновити зведений звіт.")
+
+        return card
+
+    # ── Right panel ────────────────────────────────────────────────────────────
+
+    def _build_right_panel(self, parent):
+        """Right column: photo preview placeholder + progress bar + searchable log."""
+        frame = ttk.Frame(parent)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)   # log section expands vertically
+
+        self._build_preview_card(frame).grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self._build_log_card(frame).grid(row=1, column=0, sticky="nsew")
+        return frame
+
+    def _build_preview_card(self, parent):
+        """Preview placeholder – Canvas hook for future photo preview integration."""
+        card = ttk.LabelFrame(parent, text="Превʼю фото",
+                              style="Card.TLabelframe", padding=(8, 6))
+
+        # Canvas placeholder; replace with a PIL PhotoImage in a future version
+        self.preview_canvas = tk.Canvas(card, bg="#E8EFF5", height=185,
+                                        highlightthickness=1,
+                                        highlightbackground=_C_BORDER)
+        self.preview_canvas.pack(fill="x")
+
+        def _draw_placeholder(event=None):
+            c = self.preview_canvas
+            c.delete("ph")
+            w = c.winfo_width() or _PREVIEW_FALLBACK_W
+            h = c.winfo_height() or _PREVIEW_FALLBACK_H
+            c.create_text(w // 2, h // 2 - 14,
+                          text="🖼", font=("Segoe UI", 26), fill="#B0BEC5", tags="ph")
+            c.create_text(w // 2, h // 2 + 20,
+                          text="Превʼю першого фото",
+                          font=_FONT_SMALL, fill="#90A4AE", tags="ph")
+            c.create_text(w // 2, h // 2 + 38,
+                          text="(буде реалізовано в майбутній версії)",
+                          font=("Segoe UI", 8), fill="#B0BEC5", tags="ph")
+
+        self.preview_canvas.bind("<Configure>", _draw_placeholder)
+        self.after(100, _draw_placeholder)   # draw once layout has settled
+
+        return card
+
+    def _build_log_card(self, parent):
+        """Progress bar + status label + live-searchable log text area."""
+        card = ttk.LabelFrame(parent, text="Прогрес та лог",
+                              style="Card.TLabelframe", padding=(8, 6))
+        card.columnconfigure(0, weight=1)
+        card.rowconfigure(2, weight=1)   # log text area expands
+
+        # ── Progress row ──────────────────────────────────────────────────────
+        prog = ttk.Frame(card, style="Card.TFrame")
+        prog.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        prog.columnconfigure(0, weight=1)
+        self.progress = ttk.Progressbar(prog, orient="horizontal", mode="determinate",
+                                        style="Accent.Horizontal.TProgressbar")
+        self.progress.grid(row=0, column=0, sticky="ew")
+        self.progress_label_var = tk.StringVar(value="Очікування…")
+        ttk.Label(prog, textvariable=self.progress_label_var,
+                  style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        # ── Log search row ────────────────────────────────────────────────────
+        srow = ttk.Frame(card, style="Card.TFrame")
+        srow.grid(row=1, column=0, sticky="ew", pady=(4, 2))
+        ttk.Label(srow, text="🔍", style="Muted.TLabel").pack(side="left", padx=(0, 4))
+        self._log_search_var = tk.StringVar()
+        se = ttk.Entry(srow, textvariable=self._log_search_var)
+        se.pack(side="left", fill="x", expand=True)
+        ToolTip(se, "Пошук у лозі — підсвічує всі збіги в реальному часі.")
+        clr_btn = ttk.Button(srow, text="✕", width=2,
+                             command=lambda: self._log_search_var.set(""),
+                             style="Secondary.TButton")
+        clr_btn.pack(side="left", padx=(4, 0))
+        ToolTip(clr_btn, "Очистити пошуковий рядок.")
+
+        # ── Log text ──────────────────────────────────────────────────────────
+        logf = ttk.Frame(card, style="Card.TFrame")
+        logf.grid(row=2, column=0, sticky="nsew")
+        logf.columnconfigure(0, weight=1)
+        logf.rowconfigure(0, weight=1)
+        self.log_text = tk.Text(logf, wrap="word", state="disabled",
+                                bg=_C_LOG_BG, fg=_C_LOG_FG, font=_FONT_LOG,
+                                relief="flat", padx=6, pady=4,
+                                selectbackground=_C_PRIMARY,
+                                selectforeground=_C_PRIMARY_FG)
+        self.log_text.tag_configure("search_hl", background=_C_SEARCH_HL, foreground=_C_TEXT)
+        scy = ttk.Scrollbar(logf, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scy.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        scy.grid(row=0, column=1, sticky="ns")
+
+        # Live search: re-highlight on every keystroke
+        def _on_search(*_):
+            self.log_text.tag_remove("search_hl", "1.0", "end")
+            q = self._log_search_var.get().strip()
+            if not q:
+                return
+            idx = "1.0"
+            while True:
+                pos = self.log_text.search(q, idx, stopindex="end", nocase=True)
+                if not pos:
+                    break
+                end = f"{pos}+{len(q)}c"
+                self.log_text.tag_add("search_hl", pos, end)
+                idx = end
+
+        self._log_search_var.trace_add("write", _on_search)
+        return card
     
     def on_column_selected(self, event):
         val = self.col_combo.get()
@@ -458,11 +766,11 @@ class PhotoQualityGUI(tk.Tk):
         """Оновлює стан кнопок відповідно до поточного режиму."""
         if is_run:
             self._proc_state = "running"
-            self.run_pause_btn.config(text="⏸ Пауза")
+            self.run_pause_btn.config(text="⏸  ПАУЗА")
             self.stop_btn.config(state="normal")
         else:
             self._proc_state = "idle"
-            self.run_pause_btn.config(text="▶ ЗАПУСТИТИ ОБРОБКУ")
+            self.run_pause_btn.config(text="▶  ЗАПУСТИТИ ОБРОБКУ")
             self.stop_btn.config(state="disabled")
 
     def toggle_pause(self):
@@ -477,13 +785,13 @@ class PhotoQualityGUI(tk.Tk):
             # Ставимо на паузу — знімаємо asyncio.Event
             loop.call_soon_threadsafe(pause_ev.clear)
             self._proc_state = "paused"
-            self.run_pause_btn.config(text="▶ Продовжити")
+            self.run_pause_btn.config(text="▶  ПРОДОВЖИТИ")
             self.append_log("⏸ PAUSED")
         elif self._proc_state == "paused":
             # Відновлюємо — встановлюємо asyncio.Event
             loop.call_soon_threadsafe(pause_ev.set)
             self._proc_state = "running"
-            self.run_pause_btn.config(text="⏸ Пауза")
+            self.run_pause_btn.config(text="⏸  ПАУЗА")
             self.append_log("▶ RESUMED")
 
     def stop_process(self):
