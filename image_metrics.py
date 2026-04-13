@@ -130,6 +130,25 @@ def pil_from_bytes(data):
 
 # ----------------------------- Метрики (UPDATED) -----------------------------
 
+def is_low_contrast_image(pil_image, brightness_threshold=235, std_threshold=30):
+    """Повертає True, якщо зображення дуже рівномірне і яскраве.
+
+    Такі зображення типові для прозорих/напівпрозорих товарів (наприклад, прозорі
+    чохли на білому тлі): весь кадр майже білий, текстура майже відсутня.
+    Метрика різкості Лапласіана для них природно близька до нуля — не через розмитість,
+    а через відсутність контрасту — тому таким фото не слід виставляти оцінку
+    «Дуже розмите».
+    """
+    try:
+        arr = np.array(pil_image)
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        mean_b = float(np.mean(gray))
+        std_b  = float(np.std(gray))
+        return mean_b >= brightness_threshold and std_b <= std_threshold
+    except Exception:
+        return False
+
+
 def compute_sharpness_pil(pil_image):
     """
     Grid Strategy (Зональна перевірка).
@@ -348,7 +367,24 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
         ]
 
         if len(non_white) >= 2:
-            return True, f"Фон не білий ({', '.join(non_white)})"
+            # Before flagging, verify there is actually a visible white background.
+            # When a product is maximally cropped it fills the entire frame, so the
+            # perimeter strips contain product edges rather than background.  In that
+            # case the CENTER of the image is also non-white (same product colour),
+            # meaning there is no background to evaluate → skip the flag.
+            cy, cx = h // 2, w // 2
+            center_h = max(int(h * 0.15), 10)
+            center_w = max(int(w * 0.15), 10)
+            center_crop = img[cy - center_h:cy + center_h, cx - center_w:cx + center_w]
+            center_stats = _strip_stats(center_crop)
+            center_is_non_white = (
+                center_stats["mean_v"] < WHITE_V_MIN
+                or center_stats["mean_s"] > WHITE_S_MAX
+            )
+            if not center_is_non_white:
+                # Center is white → visible background exists but perimeter is not white
+                return True, f"Фон не білий ({', '.join(non_white)})"
+            # Center is also non-white → product fills the entire frame, skip check
 
         # --- КРОК 2: Перевірка тіней ---
         # Переводимо shadow_tolerance (0..100) у максимально допустимий std_dev:
@@ -617,7 +653,7 @@ def analyze_and_classify_photo(width, height, sharpness, conf, metrics_results):
         debug_info.append(size_debug)
         status = "Погане"
 
-    if sharpness < bad_s:
+    if sharpness < bad_s and not metrics_results.get("is_low_contrast_image"):
         reasons.append("Дуже розмите")
         debug_info.append(f"Blur:{sharpness:.1f}<{bad_s}")
         status = "Погане"
@@ -631,7 +667,7 @@ def analyze_and_classify_photo(width, height, sharpness, conf, metrics_results):
     else:
         if width >= good_w or height >= good_h: is_good_size = True
     
-    is_good_sharp = (sharpness >= good_s)
+    is_good_sharp = (sharpness >= good_s) or bool(metrics_results.get("is_low_contrast_image"))
 
     if is_good_size and is_good_sharp:
         return "Хороше", "", ""
