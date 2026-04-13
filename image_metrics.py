@@ -351,6 +351,7 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
                 "mean_s": float(np.mean(s_ch)),
                 "mean_v": float(np.mean(v_ch)),
                 "std_v":  float(np.std(v_ch)),
+                "v_ch":   v_ch,
             }
 
         stats = {name: _strip_stats(strip) for name, strip in strips.items()}
@@ -400,16 +401,25 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
         shadow_tolerance = max(0, min(100, int(shadow_tolerance)))
         max_shadow_std = 2.0 + shadow_tolerance * 0.7
 
-        def _strip_has_product_edge(strip_bgr):
-            """True if the strip contains both very dark (product) and very bright
-            (background) pixels — indicating a hard product edge rather than a shadow."""
-            v_ch = cv2.cvtColor(strip_bgr, cv2.COLOR_BGR2HSV)[:, :, 2]
-            return bool(np.any(v_ch < 100) and np.any(v_ch > 220))
+        # Thresholds used to distinguish a hard product edge from a soft shadow:
+        # if a strip contains BOTH very dark pixels (product) and very bright pixels
+        # (white background), the high std_v is caused by the product boundary, not a
+        # shadow gradient.
+        PRODUCT_EDGE_DARK_THRESHOLD = 100
+        PRODUCT_EDGE_BRIGHT_THRESHOLD = 220
+
+        def _strip_has_product_edge(strip_v_ch):
+            """True if the pre-computed V channel contains both very dark (product)
+            and very bright (background) pixels — indicating a hard edge, not a shadow."""
+            return bool(
+                np.any(strip_v_ch < PRODUCT_EDGE_DARK_THRESHOLD)
+                and np.any(strip_v_ch > PRODUCT_EDGE_BRIGHT_THRESHOLD)
+            )
 
         bottom_std = stats["bottom"]["std_v"]
         avg_perimeter_std = float(np.mean([st["std_v"] for st in stats.values()]))
 
-        if bottom_std > max_shadow_std and not _strip_has_product_edge(strips["bottom"]):
+        if bottom_std > max_shadow_std and not _strip_has_product_edge(stats["bottom"]["v_ch"]):
             return True, (
                 f"Тінь внизу (std={bottom_std:.1f}, поріг={max_shadow_std:.1f})"
             )
@@ -420,7 +430,7 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
         # більшу природну варіацію (наприклад, краї рамки з обох боків).
         PERIMETER_MULTIPLIER = 1.2
         strips_with_product_edge = sum(
-            1 for name, strip in strips.items() if _strip_has_product_edge(strip)
+            1 for st in stats.values() if _strip_has_product_edge(st["v_ch"])
         )
         if avg_perimeter_std > max_shadow_std * PERIMETER_MULTIPLIER and strips_with_product_edge < 2:
             return True, (
