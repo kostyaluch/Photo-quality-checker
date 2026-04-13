@@ -17,7 +17,7 @@ from image_metrics import (
     pil_from_bytes, compute_sharpness_pil, detect_white_borders,
     check_first_photo_bg, analyze_text_content, detect_urls_from_text,
     detect_qr_codes, detect_watermark_advanced, analyze_and_classify_photo,
-    detect_transparency_in_bytes, detect_1px_border
+    detect_transparency_in_bytes, detect_1px_border, is_low_contrast_image
 )
 
 
@@ -104,6 +104,12 @@ def photo_worker_sync(task_data, conf, data):
         details["Різкість"] = round(sharpness, 2)
         details["Ширина"] = width
         details["Висота"] = height
+
+        # Detect transparent/clear products (uniformly bright image).
+        # Their sharpness is inherently near zero due to lack of contrast,
+        # not due to blur — mark so the classifier can skip "Дуже розмите".
+        if is_low_contrast_image(img):
+            metrics_results["is_low_contrast_image"] = True
 
         important_log = []
         if is_transp:
