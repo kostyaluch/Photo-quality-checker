@@ -382,9 +382,15 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
                 or center_stats["mean_s"] > WHITE_S_MAX
             )
             if not center_is_non_white:
-                # Center is white → visible background exists but perimeter is not white
-                return True, f"Фон не білий ({', '.join(non_white)})"
-            # Center is also non-white → product fills the entire frame, skip check
+                if len(non_white) == 4:
+                    # All 4 perimeter strips non-white + white centre: this is a
+                    # transparent or maximally-cropped product whose own border fills
+                    # the frame edge-to-edge.  There is no background to evaluate.
+                    pass
+                else:
+                    # Some edges non-white while centre is white → real non-white bg
+                    return True, f"Фон не білий ({', '.join(non_white)})"
+            # Centre is also non-white → product fills the entire frame, skip check
 
         # --- КРОК 2: Перевірка тіней ---
         # Переводимо shadow_tolerance (0..100) у максимально допустимий std_dev:
@@ -394,10 +400,16 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
         shadow_tolerance = max(0, min(100, int(shadow_tolerance)))
         max_shadow_std = 2.0 + shadow_tolerance * 0.7
 
+        def _strip_has_product_edge(strip_bgr):
+            """True if the strip contains both very dark (product) and very bright
+            (background) pixels — indicating a hard product edge rather than a shadow."""
+            v_ch = cv2.cvtColor(strip_bgr, cv2.COLOR_BGR2HSV)[:, :, 2]
+            return bool(np.any(v_ch < 100) and np.any(v_ch > 220))
+
         bottom_std = stats["bottom"]["std_v"]
         avg_perimeter_std = float(np.mean([st["std_v"] for st in stats.values()]))
 
-        if bottom_std > max_shadow_std:
+        if bottom_std > max_shadow_std and not _strip_has_product_edge(strips["bottom"]):
             return True, (
                 f"Тінь внизу (std={bottom_std:.1f}, поріг={max_shadow_std:.1f})"
             )
@@ -407,7 +419,10 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
         # тому вимагає суворішого контролю; загальний периметр може мати трохи
         # більшу природну варіацію (наприклад, краї рамки з обох боків).
         PERIMETER_MULTIPLIER = 1.2
-        if avg_perimeter_std > max_shadow_std * PERIMETER_MULTIPLIER:
+        strips_with_product_edge = sum(
+            1 for name, strip in strips.items() if _strip_has_product_edge(strip)
+        )
+        if avg_perimeter_std > max_shadow_std * PERIMETER_MULTIPLIER and strips_with_product_edge < 2:
             return True, (
                 f"Тінь на периметрі (avg_std={avg_perimeter_std:.1f}, "
                 f"поріг={max_shadow_std * PERIMETER_MULTIPLIER:.1f})"
