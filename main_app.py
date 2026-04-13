@@ -352,7 +352,7 @@ class PhotoQualityGUI(tk.Tk):
         cb_s = ttk.Checkbutton(sliders, text="Тіні / Брудний фон",
                                variable=self.opt_shadows, style="Card.TCheckbutton")
         cb_s.grid(row=0, column=0, sticky="w")
-        ToolTip(cb_s, "Перевіряє перше фото товару: фон має бути чисто білим, "
+        ToolTip(cb_s, "Перевіряє перше фото товару: фон має бути білим, "
                       "а тіні — мінімальними. Аналізує весь периметр (верх/низ/ліво/право).")
         ttk.Label(sliders, text="Допуск:", style="Muted.TLabel").grid(
             row=0, column=1, sticky="e", padx=(8, 4))
@@ -411,8 +411,7 @@ class PhotoQualityGUI(tk.Tk):
         cb_l = ttk.Checkbutton(cbox, text="Логотипи Rozetka",
                                variable=self.opt_logos, style="Card.TCheckbutton")
         cb_l.grid(row=0, column=0, sticky="w", pady=2)
-        ToolTip(cb_l, "Виявляє логотипи або фірмові елементи Rozetka на зображенні. "
-                      "Такі фото, як правило, заборонені маркетплейсами.")
+        ToolTip(cb_l, "Виявляє логотипи або фірмові елементи Rozetka на зображенні.")
 
         self.opt_watermark = tk.BooleanVar(value=opts_cfg.get("check_watermarks", False))
         cb_w = ttk.Checkbutton(cbox, text="Водяні знаки",
