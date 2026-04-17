@@ -7,6 +7,27 @@ Build command (run from the repository root):
     pyinstaller photo_quality_checker.spec
 
 The resulting application is placed in  dist/PhotoQualityChecker/ .
+The layout of that folder is intentionally clean:
+
+    dist/PhotoQualityChecker/
+    ├── PhotoQualityChecker.exe   ← the application
+    └── _internal/                ← Python runtime, DLLs, bundled resources
+        ├── config_photo_quality.json
+        ├── PQC_logo.ico
+        ├── watermark_templates/
+        └── vendor/
+            └── tesseract/
+                ├── tesseract.exe
+                ├── *.dll
+                └── tessdata/
+                    ├── eng.traineddata
+                    ├── rus.traineddata
+                    └── ukr.traineddata
+
+After the first run the application also creates next to the exe:
+    ├── config_photo_quality.json   ← user-saved settings (overrides bundled default)
+    └── .photo_cache/               ← downloaded-image cache
+
 Copy or move the entire  dist/PhotoQualityChecker/  folder to any Windows PC —
 no system-wide Python or Tesseract installation is required.
 
@@ -16,8 +37,9 @@ Prerequisites:
     3. Place tesseract.exe + DLLs in vendor/tesseract/  (see docs/ocr.md)
 """
 
+import glob as _glob
 import os
-from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT, Tree
+from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
 
 block_cipher = None
 
@@ -25,14 +47,35 @@ REPO_ROOT = os.path.abspath(os.path.dirname(SPEC))  # noqa: F821  # SPEC is inje
 VENDOR_TESSERACT = os.path.join(REPO_ROOT, "vendor", "tesseract")
 
 # ---------------------------------------------------------------------------
-# Collect all files from vendor/tesseract/ recursively.
-# This includes tesseract.exe, all required DLLs and the tessdata/ directory.
+# Collect Tesseract files selectively to keep the bundle lean:
+#   • tesseract.exe + all DLLs from the root of vendor/tesseract/
+#   • only the three language models actually used by the application
+#
+# A recursive Tree() would pull in every file found in vendor/tesseract/
+# (including unused language packs that can easily weigh several GB).
 # ---------------------------------------------------------------------------
-tesseract_tree = Tree(
-    VENDOR_TESSERACT,
-    prefix=os.path.join("vendor", "tesseract"),
-    excludes=[".gitignore"],
-)
+_DEST_TESS_ROOT = os.path.join("vendor", "tesseract")
+_DEST_TESSDATA = os.path.join("vendor", "tesseract", "tessdata")
+_NEEDED_LANGS = {"eng.traineddata", "rus.traineddata", "ukr.traineddata"}
+_SKIP_EXTENSIONS = {".gitignore", ".gitkeep", ".md", ".txt"}
+
+# tesseract.exe and required DLLs from the root of vendor/tesseract/
+tesseract_root_datas = [
+    (src, _DEST_TESS_ROOT)
+    for src in _glob.glob(os.path.join(VENDOR_TESSERACT, "*"))
+    if os.path.isfile(src)
+    and os.path.splitext(src)[1].lower() not in _SKIP_EXTENSIONS
+]
+
+# Only the three language models needed at runtime
+tesseract_lang_datas = [
+    (src, _DEST_TESSDATA)
+    for name in _NEEDED_LANGS
+    for src in [os.path.join(VENDOR_TESSERACT, "tessdata", name)]
+    if os.path.isfile(src)
+]
+
+tesseract_datas = tesseract_root_datas + tesseract_lang_datas
 
 a = Analysis(
     [os.path.join(REPO_ROOT, "main_app.py")],
@@ -41,10 +84,12 @@ a = Analysis(
     datas=[
         # Watermark template images
         (os.path.join(REPO_ROOT, "watermark_templates"), "watermark_templates"),
-        # Default configuration
+        # Default configuration (read-only bundled copy; user-editable copy lives next to the exe)
         (os.path.join(REPO_ROOT, "config_photo_quality.json"), "."),
         # Application icon
         (os.path.join(REPO_ROOT, "PQC_logo.ico"), "."),
+        # Portable Tesseract OCR engine (filtered — only required files)
+        *tesseract_datas,
     ],
     hiddenimports=[
         "PIL._tkinter_finder",
@@ -60,9 +105,6 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
-
-# Append the Tesseract tree to the collected data
-a.datas += tesseract_tree
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -83,7 +125,9 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=os.path.join(REPO_ROOT, "PQC_logo.ico"),
-    contents_directory=".",
+    # Put all Python internals and bundled resources into _internal/ so that
+    # only PhotoQualityChecker.exe is visible at the top of the dist folder.
+    contents_directory="_internal",
 )
 
 coll = COLLECT(

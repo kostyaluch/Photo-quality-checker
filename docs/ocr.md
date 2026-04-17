@@ -144,9 +144,39 @@ pip install pyinstaller
 pyinstaller photo_quality_checker.spec
 ```
 
-The finished application is placed in `dist/PhotoQualityChecker/`. The
-`vendor/tesseract/` folder is automatically bundled inside the distribution
-directory.
+The finished application is placed in `dist/PhotoQualityChecker/`.
+
+### Distribution folder layout
+
+```
+dist/PhotoQualityChecker/
+├── PhotoQualityChecker.exe   ← the application — the only file at the root
+└── _internal/                ← Python runtime, DLLs, and bundled resources
+    ├── config_photo_quality.json
+    ├── PQC_logo.ico
+    ├── watermark_templates/
+    └── vendor/
+        └── tesseract/
+            ├── tesseract.exe
+            ├── *.dll
+            └── tessdata/
+                ├── eng.traineddata
+                ├── rus.traineddata
+                └── ukr.traineddata
+```
+
+After the first run, two items are created next to the exe:
+- `config_photo_quality.json` — user-saved settings (overrides the bundled default)
+- `.photo_cache/` — downloaded-image cache
+
+All Python internals (hundreds of `.dll` / `.pyd` files) are hidden inside
+`_internal/` so only `PhotoQualityChecker.exe` is visible at the top level.
+
+> **Why only three language files?**  The build spec deliberately includes only
+> `eng`, `rus`, and `ukr` traineddata — the three languages actually used by the
+> application.  A full Tesseract installation ships dozens of language packs that
+> can easily add several GB to the bundle; the selective copy keeps the
+> distribution size small.
 
 ### Distribute
 
@@ -176,8 +206,12 @@ def resource_path(relative_path: str) -> str:
 | Runtime environment | `base_path` value |
 |---------------------|-------------------|
 | Plain Python script | directory of `image_metrics.py` |
-| PyInstaller onefile | temporary extraction directory (`sys._MEIPASS`) |
-| PyInstaller onedir  | distribution directory (`sys._MEIPASS`) |
+| PyInstaller onedir  | `dist/PhotoQualityChecker/_internal/` (`sys._MEIPASS`) |
+
+With `contents_directory="_internal"` in the spec, PyInstaller sets
+`sys._MEIPASS` to the `_internal/` subdirectory.  All bundled resources
+(`watermark_templates/`, `PQC_logo.ico`, `vendor/tesseract/`) are placed there,
+so `resource_path()` resolves them correctly.
 
 The Tesseract binary and tessdata directory are then located at:
 
