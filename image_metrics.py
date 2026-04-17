@@ -683,7 +683,7 @@ def analyze_and_classify_photo(width, height, sharpness, conf, metrics_results):
         ("has_logo", "Логотип Rozetka", "Знайдено текст 'Rozetka'"),
         ("has_watermark", "Водяний знак", metrics_results.get("watermark_reason")),
         ("has_rus_text", "Рос. текст", "Знайдено кирилицю"),
-        ("has_qr_url", "URL/QR на фото", metrics_results.get("qr_url_data")),
+        ("has_qr_url", "Наявність URL або QR-коду на фото", metrics_results.get("qr_url_data")),
         ("has_phone_numbers", "Номер телефону на фото", metrics_results.get("phone_numbers_data")),
     ]
 
