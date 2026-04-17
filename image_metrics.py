@@ -41,25 +41,31 @@ if os.path.isfile(_TESSERACT_EXE):
     os.environ["TESSDATA_PREFIX"] = _TESSDATA_DIR
 
 
-def _hide_tesseract_console_windows_on_windows():
+def _hide_tesseract_console_on_windows():
     """Force hidden OCR subprocesses on Windows to avoid transient cmd popups."""
     if os.name != "nt":
         return
 
-    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess_args = getattr(pytesseract.pytesseract, "subprocess_args", None)
-    if not create_no_window or not callable(subprocess_args):
+    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", None)
+    original_subprocess_args = getattr(pytesseract.pytesseract, "subprocess_args", None)
+    if (
+        create_no_window is None
+        or original_subprocess_args is None
+        or not callable(original_subprocess_args)
+    ):
         return
 
-    def _subprocess_args_hidden(include_stdout=True):
-        kwargs = subprocess_args(include_stdout=include_stdout)
-        kwargs["creationflags"] = kwargs.get("creationflags", 0) | create_no_window
-        return kwargs
+    def _subprocess_args_hidden(*args, **kwargs):
+        subprocess_kwargs = dict(original_subprocess_args(*args, **kwargs))
+        subprocess_kwargs["creationflags"] = (
+            subprocess_kwargs.get("creationflags", 0) | create_no_window
+        )
+        return subprocess_kwargs
 
     pytesseract.pytesseract.subprocess_args = _subprocess_args_hidden
 
 
-_hide_tesseract_console_windows_on_windows()
+_hide_tesseract_console_on_windows()
 
 # 1. Текстові маркери водяних знаків
 WATERMARK_KEYWORDS = [
