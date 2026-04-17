@@ -2,6 +2,7 @@
 import os
 import re
 import sys
+import subprocess
 import cv2
 import numpy as np
 import pytesseract
@@ -38,6 +39,27 @@ _TESSDATA_DIR = resource_path(os.path.join("vendor", "tesseract", "tessdata"))
 if os.path.isfile(_TESSERACT_EXE):
     pytesseract.pytesseract.tesseract_cmd = _TESSERACT_EXE
     os.environ["TESSDATA_PREFIX"] = _TESSDATA_DIR
+
+
+def _hide_tesseract_console_windows_on_windows():
+    """Force hidden OCR subprocesses on Windows to avoid transient cmd popups."""
+    if os.name != "nt":
+        return
+
+    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess_args = getattr(pytesseract.pytesseract, "subprocess_args", None)
+    if not create_no_window or not callable(subprocess_args):
+        return
+
+    def _subprocess_args_hidden(include_stdout=True):
+        kwargs = subprocess_args(include_stdout=include_stdout)
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | create_no_window
+        return kwargs
+
+    pytesseract.pytesseract.subprocess_args = _subprocess_args_hidden
+
+
+_hide_tesseract_console_windows_on_windows()
 
 # 1. Текстові маркери водяних знаків
 WATERMARK_KEYWORDS = [
