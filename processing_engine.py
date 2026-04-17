@@ -16,7 +16,7 @@ from utils import (
 from image_metrics import (
     pil_from_bytes, compute_sharpness_pil, detect_white_borders,
     check_first_photo_bg, analyze_text_content, detect_urls_from_text,
-    detect_qr_codes, detect_watermark_advanced, analyze_and_classify_photo,
+    detect_phone_numbers_from_text, detect_qr_codes, detect_watermark_advanced, analyze_and_classify_photo,
     detect_transparency_in_bytes, detect_1px_border, is_low_contrast_image
 )
 
@@ -65,6 +65,8 @@ def _make_details_template(product_id, photo_index, url, options):
         details["Російський текст"] = "Ні"
     if options.get("check_qr_url"):
         details["URL/QR"] = "Ні"
+    if options.get("check_phone_numbers"):
+        details["Номери телефонів"] = "Ні"
     return details
 
 
@@ -151,6 +153,7 @@ def photo_worker_sync(task_data, conf, data):
             or options.get("check_qr_url")
             or options.get("check_logos")
             or options.get("check_watermarks")
+            or options.get("check_phone_numbers")
         )
 
         if check_text_needed:
@@ -182,6 +185,14 @@ def photo_worker_sync(task_data, conf, data):
                     metrics_results["qr_url_data"] = "; ".join(qr_urls_found)
                     details["URL/QR"] = "Так"
                     important_log.append(f"URL/QR ({len(qr_urls_found)})")
+
+            if options.get("check_phone_numbers"):
+                phones = detect_phone_numbers_from_text(full_text)
+                if phones:
+                    metrics_results["has_phone_numbers"] = True
+                    metrics_results["phone_numbers_data"] = "; ".join(phones)
+                    details["Номери телефонів"] = "Так"
+                    important_log.append(f"Телефони ({len(phones)})")
 
         if options.get("check_watermarks"):
             has_wm, reason = detect_watermark_advanced(
@@ -293,10 +304,21 @@ def regenerate_status_from_details(details_path):
         df_status["К-ть Поганих"] = new_bad
         df_status["К-ть Середніх"] = new_mid
 
-        df_status.to_excel(status_path, index=False, engine="openpyxl")
-        format_excel_header(status_path)
-
-        return {"success": True, "path": status_path, "count": len(df_status)}
+        try:
+            df_status.to_excel(status_path, index=False, engine="openpyxl")
+            format_excel_header(status_path)
+            return {"success": True, "path": status_path, "count": len(df_status)}
+        except PermissionError:
+            base, ext = os.path.splitext(status_path)
+            fallback_path = f"{base}_UPDATED_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+            df_status.to_excel(fallback_path, index=False, engine="openpyxl")
+            format_excel_header(fallback_path)
+            return {
+                "success": True,
+                "path": fallback_path,
+                "count": len(df_status),
+                "warning": "Основний файл зайнятий (відкритий в іншій програмі). Збережено копію з суфіксом _UPDATED."
+            }
 
     except Exception as e:
         return {"error": f"Update Error: {str(e)}"}
@@ -579,11 +601,14 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
             "check_watermarks": "Водяний знак",
             "check_rus_text": "Російський текст",
             "check_qr_url": "URL/QR",
+            "check_phone_numbers": "Номери телефонів",
         }
         cols = ["ID", "Фото", "Посилання на фото", "Статус", "Причина"]
         for key, col_name in OPTIONAL_COLS_MAP.items():
-            if options.get(key):
-                cols.append(col_name)
+            if options.get(key) and col_name in details_df.columns:
+                has_yes = details_df[col_name].fillna("").astype(str).str.strip().eq("Так").any()
+                if has_yes:
+                    cols.append(col_name)
         cols.extend(["Ширина", "Висота", "Різкість", "Debug Info"])
 
         for c in cols:

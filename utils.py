@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
         "check_rus_text": False,
         "check_shadows": False,
         "check_qr_url": False,
+        "check_phone_numbers": False,
         "check_logos": True,
         "check_watermarks": False,
         "check_borders": True,

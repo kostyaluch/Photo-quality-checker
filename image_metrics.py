@@ -592,6 +592,33 @@ def analyze_text_content(pil_image):
 def detect_urls_from_text(text):
     return re.findall(r'[a-zA-Z0-9-]+\.(com|net|org|ua|ru|top)[^\s]*', text)
 
+
+def detect_phone_numbers_from_text(text):
+    """Повертає знайдені телефонні номери у тексті (OCR), нормалізовані до +380XXXXXXXXX."""
+    if not text:
+        return []
+
+    # Залишаємо тільки цифри/службові розділювачі для стабільного regex-пошуку.
+    cleaned = re.sub(r"[^\d\+\-\(\)\s]", " ", str(text))
+    pattern = re.compile(
+        r"(?<!\d)(?:\+?38)?0\d{2}[\s\-\(\)]*\d{3}[\s\-\(\)]*\d{2}[\s\-\(\)]*\d{2}(?!\d)"
+    )
+
+    found = []
+    seen = set()
+    for raw_match in pattern.findall(cleaned):
+        digits = re.sub(r"\D", "", raw_match)
+        if len(digits) == 10 and digits.startswith("0"):
+            normalized = "+38" + digits
+        elif len(digits) == 12 and digits.startswith("380"):
+            normalized = "+" + digits
+        else:
+            continue
+        if normalized not in seen:
+            seen.add(normalized)
+            found.append(normalized)
+    return found
+
 def detect_qr_codes(pil_image):
     try:
         img_arr = np.array(pil_image)
@@ -657,6 +684,7 @@ def analyze_and_classify_photo(width, height, sharpness, conf, metrics_results):
         ("has_watermark", "Водяний знак", metrics_results.get("watermark_reason")),
         ("has_rus_text", "Рос. текст", "Знайдено кирилицю"),
         ("has_qr_url", "URL/QR на фото", metrics_results.get("qr_url_data")),
+        ("has_phone_numbers", "Номер телефону на фото", metrics_results.get("phone_numbers_data")),
     ]
 
     for key, reason_txt, debug_txt in critical_flags:
