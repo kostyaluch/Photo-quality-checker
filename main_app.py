@@ -114,11 +114,11 @@ class PhotoQualityGUI(tk.Tk):
         # References to asyncio loop and asyncio.Event (set in thread_target)
         self._async_loop = None
         self._async_pause_event = None
-        # Lock + counter for preview rate-limiting.
-        # gui_callback (background thread) and append_log (main thread) both
-        # modify _preview_pending; the lock ensures correctness across threads.
+        # Cross-thread preview handoff:
+        # keep only the latest preview buffer and schedule at most one GUI update.
         self._preview_lock = threading.Lock()
-        self._preview_pending = 0
+        self._latest_preview_data = None
+        self._preview_update_scheduled = False
         self.create_widgets()
 
     # ── Widget construction ────────────────────────────────────────────────────
@@ -809,15 +809,30 @@ class PhotoQualityGUI(tk.Tk):
 
     def gui_callback(self, msg):
         if isinstance(msg, tuple) and msg[0] == "preview_image":
-            # Limit the number of queued preview callbacks to avoid flooding the
-            # tkinter event queue with large image buffers when many products are
-            # processed concurrently.  Skipping stale previews is acceptable —
-            # only the latest one matters visually.
+            # Coalesce preview updates: never flood tkinter queue with image blobs.
             with self._preview_lock:
-                if self._preview_pending >= 2:
+                self._latest_preview_data = msg[1]
+                if self._preview_update_scheduled:
                     return
-                self._preview_pending += 1
+                self._preview_update_scheduled = True
+            self.after(0, self._flush_preview_update)
+            return
         self.after(0, self.append_log, msg)
+
+    def _flush_preview_update(self):
+        with self._preview_lock:
+            data = self._latest_preview_data
+            self._latest_preview_data = None
+
+        if data is not None:
+            self.update_preview(data)
+
+        with self._preview_lock:
+            if self._latest_preview_data is None:
+                self._preview_update_scheduled = False
+                return
+
+        self.after(0, self._flush_preview_update)
 
     def append_log(self, msg):
         if isinstance(msg, tuple):
@@ -832,10 +847,6 @@ class PhotoQualityGUI(tk.Tk):
                 self.progress["value"] = done
                 eta_str = format_duration(eta_sec)
                 self.progress_label_var.set(f"{done} / {total} | ETA: {eta_str}")
-            elif cmd == "preview_image":
-                with self._preview_lock:
-                    self._preview_pending = max(0, self._preview_pending - 1)
-                self.update_preview(val)
             return
         self.log_text.configure(state="normal")
         self.log_text.insert("end", str(msg) + "\n")
