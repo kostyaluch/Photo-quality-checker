@@ -840,8 +840,6 @@ class PhotoQualityGUI(tk.Tk):
                 self.progress["value"] = done
                 eta_str = format_duration(eta_sec)
                 self.progress_label_var.set(f"{done} / {total} | ETA: {eta_str}")
-            elif cmd == "preview_image":
-                self.update_preview(val)
             return
         self.log_text.configure(state="normal")
         self.log_text.insert("end", str(msg) + "\n")
