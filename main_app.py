@@ -178,6 +178,7 @@ class PhotoQualityGUI(tk.Tk):
                     background=_C_SURFACE, foreground=_C_TEXT, font=_FONT_BODY)
         s.map("Card.TCheckbutton",
               background=[("active", _C_SURFACE)])
+        s.configure("CardSelected.TCheckbutton", indicatorcolor="#16A34A")
 
         # ── Primary action button (Run) ──
         s.configure("Primary.TButton",
@@ -342,6 +343,25 @@ class PhotoQualityGUI(tk.Tk):
         card = ttk.LabelFrame(parent, text="③  Додаткові перевірки",
                               style="Card.TLabelframe", padding=10)
 
+        def make_cb(parent_widget, text, var):
+            # Використовуємо tk.Checkbutton, щоб мати стандартну "галочку" замість хрестика.
+            return tk.Checkbutton(
+                parent_widget,
+                text=text,
+                variable=var,
+                bg=_C_SURFACE,
+                fg=_C_TEXT,
+                activebackground=_C_SURFACE,
+                activeforeground=_C_TEXT,
+                selectcolor="#E2E8F0",
+                font=_FONT_BODY,
+                anchor="w",
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                cursor="hand2",
+            )
+
         # ── Slider rows ──────────────────────────────────────────────────────
         sliders = ttk.Frame(card, style="Card.TFrame")
         sliders.pack(fill="x", pady=(0, 6))
@@ -349,8 +369,7 @@ class PhotoQualityGUI(tk.Tk):
 
         # Shadows
         self.opt_shadows = tk.BooleanVar(value=opts_cfg.get("check_shadows", False))
-        cb_s = ttk.Checkbutton(sliders, text="Тіні / Брудний фон",
-                               variable=self.opt_shadows, style="Card.TCheckbutton")
+        cb_s = make_cb(sliders, "Тіні / Брудний фон", self.opt_shadows)
         cb_s.grid(row=0, column=0, sticky="w")
         ToolTip(cb_s, "Перевіряє перше фото товару: фон має бути білим, "
                       "а тіні — мінімальними. Аналізує весь периметр (верх/низ/ліво/право).")
@@ -373,8 +392,7 @@ class PhotoQualityGUI(tk.Tk):
 
         # Borders
         self.opt_borders = tk.BooleanVar(value=opts_cfg.get("check_borders", True))
-        cb_b = ttk.Checkbutton(sliders, text="Некадровані (білі поля)",
-                               variable=self.opt_borders, style="Card.TCheckbutton")
+        cb_b = make_cb(sliders, "Некадровані (білі поля)", self.opt_borders)
         cb_b.grid(row=1, column=0, sticky="w", pady=(6, 0))
         ToolTip(cb_b, "Виявляє зображення, де товар не займає весь кадр і навколо є надмірні білі поля.")
         ttk.Label(sliders, text="Макс %:", style="Muted.TLabel").grid(
@@ -408,33 +426,33 @@ class PhotoQualityGUI(tk.Tk):
         cbox.columnconfigure(1, weight=1)
 
         self.opt_logos = tk.BooleanVar(value=opts_cfg.get("check_logos", False))
-        cb_l = ttk.Checkbutton(cbox, text="Логотипи Rozetka",
-                               variable=self.opt_logos, style="Card.TCheckbutton")
+        cb_l = make_cb(cbox, "Логотипи Rozetka", self.opt_logos)
         cb_l.grid(row=0, column=0, sticky="w", pady=2)
         ToolTip(cb_l, "Виявляє логотипи або фірмові елементи Rozetka на зображенні.")
 
         self.opt_watermark = tk.BooleanVar(value=opts_cfg.get("check_watermarks", False))
-        cb_w = ttk.Checkbutton(cbox, text="Водяні знаки",
-                               variable=self.opt_watermark, style="Card.TCheckbutton")
+        cb_w = make_cb(cbox, "Водяні знаки", self.opt_watermark)
         cb_w.grid(row=0, column=1, sticky="w", pady=2)
         ToolTip(cb_w, "Виявляє водяні знаки на фото за допомогою шаблонів із папки watermark_templates.")
 
         self.opt_rus_text = tk.BooleanVar(value=opts_cfg.get("check_rus_text", False))
-        cb_r = ttk.Checkbutton(cbox, text="Російський текст",
-                               variable=self.opt_rus_text, style="Card.TCheckbutton")
+        cb_r = make_cb(cbox, "Російський текст", self.opt_rus_text)
         cb_r.grid(row=1, column=0, sticky="w", pady=2)
         ToolTip(cb_r, "За допомогою OCR виявляє текст російською мовою. "
                       "Увага: ця перевірка може уповільнити обробку.")
 
         self.opt_qr_url = tk.BooleanVar(value=opts_cfg.get("check_qr_url", False))
-        cb_q = ttk.Checkbutton(cbox, text="URL / QR коди",
-                               variable=self.opt_qr_url, style="Card.TCheckbutton")
+        cb_q = make_cb(cbox, "URL / QR коди", self.opt_qr_url)
         cb_q.grid(row=1, column=1, sticky="w", pady=2)
         ToolTip(cb_q, "Виявляє QR-коди або текстові URL-адреси на зображенні.")
 
+        self.opt_phone_numbers = tk.BooleanVar(value=opts_cfg.get("check_phone_numbers", False))
+        cb_ph = make_cb(cbox, "Номери телефонів", self.opt_phone_numbers)
+        cb_ph.grid(row=2, column=1, sticky="w", pady=2)
+        ToolTip(cb_ph, "Виявляє телефонні номери у тексті на фото (OCR).")
+
         self.opt_1px = tk.BooleanVar(value=opts_cfg.get("check_1px_border", False))
-        cb_p = ttk.Checkbutton(cbox, text="Тонка рамка (1px)",
-                               variable=self.opt_1px, style="Card.TCheckbutton")
+        cb_p = make_cb(cbox, "Тонка рамка (1px)", self.opt_1px)
         cb_p.grid(row=2, column=0, sticky="w", pady=2)
         ToolTip(cb_p, "Виявляє чорні/темні рамки товщиною 1-2 пікселі по самому краю фото.")
 
@@ -727,6 +745,7 @@ class PhotoQualityGUI(tk.Tk):
                 "check_rus_text": self.opt_rus_text.get(),
                 "check_shadows": self.opt_shadows.get(),
                 "check_qr_url": self.opt_qr_url.get(),
+                "check_phone_numbers": self.opt_phone_numbers.get(),
                 "check_watermarks": self.opt_watermark.get(),
                 "check_borders": self.opt_borders.get(),
                 "check_1px_border": self.opt_1px.get(),
@@ -908,9 +927,10 @@ class PhotoQualityGUI(tk.Tk):
             self.gui_callback(f"❌ Помилка: {res['error']}")
             messagebox.showerror("Помилка", res['error'])
         else:
-            msg = f"✅ Готово! Оновлено записів: {res['count']}.\nФайл: {res['path']}"
+            warning = f"\n⚠️ {res['warning']}" if res.get("warning") else ""
+            msg = f"✅ Готово! Оновлено записів: {res['count']}.\nФайл: {res['path']}{warning}"
             self.gui_callback(msg)
-            messagebox.showinfo("Успіх", "Файл статусів успішно оновлено!")
+            messagebox.showinfo("Успіх", msg)
 
 if __name__ == "__main__":
     app = PhotoQualityGUI()

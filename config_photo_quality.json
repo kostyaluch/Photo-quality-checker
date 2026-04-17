@@ -20,6 +20,7 @@
     "check_rus_text": true,
     "check_shadows": true,
     "check_qr_url": false,
+    "check_phone_numbers": false,
     "check_watermarks": false,
     "check_borders": true,
     "check_ai": false,
