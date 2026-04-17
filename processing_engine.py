@@ -265,6 +265,8 @@ def regenerate_status_from_details(details_path):
             if pid in details_grouped.groups:
                 grp = details_grouped.get_group(pid)
                 s_list = grp["Загальна оцінка якості фото"].tolist()
+
+                if "Погане" in s_list:
                     fin_status = "Погане"
                 elif "Середнє" in s_list:
                     fin_status = "Середнє"
