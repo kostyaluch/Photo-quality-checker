@@ -4,6 +4,7 @@ import re
 import json
 import shutil
 import hashlib
+import asyncio
 from datetime import datetime
 import aiohttp
 import requests
@@ -16,6 +17,12 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config_photo_quality.json")
 CACHE_DIR = os.path.join(BASE_DIR, ".photo_cache")
 
 HTTP_TIMEOUT = 15
+HTTP_DOWNLOAD_RETRIES = 3
+HTTP_RETRY_BASE_DELAY = 0.7  # base delay between retries (seconds)
+HTTP_TIMEOUT_MULTIPLIER = 1.5  # extra read headroom for slow/unstable CDNs
+CONNECT_TIMEOUT_CAP = 10  # upper bound for TCP connect timeout (seconds)
+DOWNLOAD_CHUNK_SIZE_BYTES = 64 * 1024
+MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024
 # Виключаємо лапки, крапки та коми з URL вже на рівні регексу
 URL_REGEX = re.compile(r"(https?://[^\s,;\)\]\}\'\"]+)", re.IGNORECASE)
 
@@ -218,7 +225,7 @@ def download_image_bytes(path_or_url, session):
         resp.raise_for_status()
         
         content = resp.content
-        if len(content) > 50 * 1024 * 1024:
+        if len(content) > MAX_IMAGE_SIZE_BYTES:
             return None, "File > 50MB"
 
         save_to_cache(path_or_url, content, resp.headers.get("Content-Type"))
@@ -251,18 +258,45 @@ async def async_download_image_bytes(path_or_url, session, semaphore):
     if is_cached(path_or_url):
         return load_from_cache(path_or_url), None
 
+    last_error = "Unknown download error"
+
     async with semaphore:
-        try:
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
-            async with session.get(path_or_url, timeout=timeout) as resp:
-                resp.raise_for_status()
-                content = await resp.read()
+        for attempt in range(1, HTTP_DOWNLOAD_RETRIES + 1):
+            try:
+                timeout = aiohttp.ClientTimeout(
+                    total=HTTP_TIMEOUT * HTTP_TIMEOUT_MULTIPLIER,
+                    connect=min(HTTP_TIMEOUT, CONNECT_TIMEOUT_CAP),
+                    sock_read=HTTP_TIMEOUT * HTTP_TIMEOUT_MULTIPLIER,
+                )
+                async with session.get(path_or_url, timeout=timeout) as resp:
+                    resp.raise_for_status()
 
-                if len(content) > 50 * 1024 * 1024:
-                    return None, "File > 50MB"
+                    chunks = []
+                    total_size = 0
+                    async for chunk in resp.content.iter_chunked(DOWNLOAD_CHUNK_SIZE_BYTES):
+                        next_size = total_size + len(chunk)
+                        if next_size > MAX_IMAGE_SIZE_BYTES:
+                            return None, "File > 50MB"
+                        total_size = next_size
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
 
-                content_type = resp.headers.get("Content-Type")
-                save_to_cache(path_or_url, content, content_type)
-                return content, None
-        except Exception as e:
-            return None, str(e)
+                    content_type = resp.headers.get("Content-Type")
+                    save_to_cache(path_or_url, content, content_type)
+                    return content, None
+            except (
+                aiohttp.ClientPayloadError,
+                aiohttp.ClientConnectionError,
+                aiohttp.ServerDisconnectedError,
+                aiohttp.ClientOSError,
+                asyncio.TimeoutError,
+            ) as e:
+                last_error = str(e)
+                if attempt < HTTP_DOWNLOAD_RETRIES:
+                    await asyncio.sleep(HTTP_RETRY_BASE_DELAY * (2 ** (attempt - 1)))
+                    continue
+                break
+            except Exception as e:
+                return None, str(e)
+
+    return None, last_error
