@@ -442,7 +442,7 @@ class PhotoQualityGUI(tk.Tk):
                       "Увага: ця перевірка може уповільнити обробку.")
 
         self.opt_qr_url = tk.BooleanVar(value=opts_cfg.get("check_qr_url", False))
-        cb_q = make_cb(cbox, "URL / QR коди", self.opt_qr_url)
+        cb_q = make_cb(cbox, "Наявність URL або QR-коду", self.opt_qr_url)
         cb_q.grid(row=1, column=1, sticky="w", pady=2)
         ToolTip(cb_q, "Виявляє QR-коди або текстові URL-адреси на зображенні.")
 

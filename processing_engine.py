@@ -43,11 +43,11 @@ def find_id_column(df):
 def _make_details_template(product_id, photo_index, url, options):
     """Створює базовий шаблон словника результатів для одного фото."""
     details = {
-        "ID": product_id,
-        "Фото": photo_index,
+        "ID товару": product_id,
+        "Фото (порядковий номер в КТ)": photo_index,
         "Посилання на фото": url,
-        "Статус": "Погане",
-        "Причина": "",
+        "Загальна оцінка якості фото": "Погане",
+        "Опис виявлених недоліків": "",
         "Ширина": 0,
         "Висота": 0,
         "Різкість": 0.0,
@@ -64,7 +64,7 @@ def _make_details_template(product_id, photo_index, url, options):
     if options.get("check_rus_text"):
         details["Російський текст"] = "Ні"
     if options.get("check_qr_url"):
-        details["URL/QR"] = "Ні"
+        details["Наявність URL або QR-коду на фото"] = "Ні"
     if options.get("check_phone_numbers"):
         details["Номери телефонів"] = "Ні"
     return details
@@ -97,7 +97,7 @@ def photo_worker_sync(task_data, conf, data):
     del data  # Звільняємо сирі байти одразу
 
     if img is None:
-        details["Причина"] = "Файл пошкоджено/Не фото"
+        details["Опис виявлених недоліків"] = "Файл пошкоджено/Не фото"
         return details, f"[ID:{product_id}] ⚠️ Файл не є зображенням"
 
     try:
@@ -183,7 +183,7 @@ def photo_worker_sync(task_data, conf, data):
                 if qr_urls_found:
                     metrics_results["has_qr_url"] = True
                     metrics_results["qr_url_data"] = "; ".join(qr_urls_found)
-                    details["URL/QR"] = "Так"
+                    details["Наявність URL або QR-коду на фото"] = "Так"
                     important_log.append(f"URL/QR ({len(qr_urls_found)})")
 
             if options.get("check_phone_numbers"):
@@ -207,8 +207,8 @@ def photo_worker_sync(task_data, conf, data):
         status, reason_str, debug_str = analyze_and_classify_photo(
             width, height, sharpness, conf, metrics_results
         )
-        details["Статус"] = status
-        details["Причина"] = reason_str
+        details["Загальна оцінка якості фото"] = status
+        details["Опис виявлених недоліків"] = reason_str
 
         if metrics_results.get("qr_url_data") and "QR" not in debug_str:
             debug_str += f"; Found: {metrics_results['qr_url_data']}"
@@ -264,9 +264,7 @@ def regenerate_status_from_details(details_path):
         for pid in df_status["_ID_KEY"]:
             if pid in details_grouped.groups:
                 grp = details_grouped.get_group(pid)
-                s_list = grp["Статус"].tolist()
-
-                if "Погане" in s_list:
+                s_list = grp["Загальна оцінка якості фото"].tolist()
                     fin_status = "Погане"
                 elif "Середнє" in s_list:
                     fin_status = "Середнє"
@@ -275,9 +273,9 @@ def regenerate_status_from_details(details_path):
 
                 probs = []
                 for _, r in grp.iterrows():
-                    st = r.get("Статус", "")
-                    reason = r.get("Причина", "")
-                    photo_idx = r.get("Фото", "?")
+                    st = r.get("Загальна оцінка якості фото", "")
+                    reason = r.get("Опис виявлених недоліків", "")
+                    photo_idx = r.get("Фото (порядковий номер в КТ)", "?")
                     if st != "Хороше" and pd.notna(reason) and reason:
                         probs.append(f"{photo_idx} ({reason})")
 
@@ -297,7 +295,7 @@ def regenerate_status_from_details(details_path):
 
         # Повертаємо оригінальну назву колонки
         df_status = df_status.rename(columns={"_ID_KEY": status_id_col})
-        df_status["Статус"] = new_statuses
+        df_status["Загальна оцінка якості фото"] = new_statuses
         df_status["Проблемні фото"] = new_problems
         df_status["Всього фото"] = new_totals
         df_status["К-ть Хороших"] = new_good
@@ -472,14 +470,14 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
             base = _make_details_template(product_id, photo_index, url, options)
 
             if task["is_empty"]:
-                base["Причина"] = "Немає фото"
+                base["Опис виявлених недоліків"] = "Немає фото"
                 return base, None
 
             # Завантаження зображення (async I/O)
             data, err = await async_download_image_bytes(url, session, semaphore)
 
             if data is None:
-                base["Причина"] = "Не вдалося завантажити"
+                base["Опис виявлених недоліків"] = "Не вдалося завантажити"
                 base["Debug Info"] = str(err)
                 return base, f"[ID:{product_id}] ⚠️ Помилка завантаження: {err}"
 
@@ -494,7 +492,7 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
                 )
                 return result
             except Exception as e:
-                base["Причина"] = f"Помилка аналізу: {e}"
+                base["Опис виявлених недоліків"] = f"Помилка аналізу: {e}"
                 return base, f"[ID:{product_id}] ❌ Критична помилка: {e}"
 
         # Запускаємо усі оригінальні завдання паралельно
@@ -519,7 +517,7 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
                     if url:
                         url_result_cache[url] = details
 
-                    st = details.get("Статус", "Error")
+                    st = details.get("Загальна оцінка якості фото", "Error")
                     if st == "Хороше":
                         stats["Good"] += 1
                     elif st == "Погане":
@@ -553,17 +551,17 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
 
         if task["is_duplicate"]:
             # Дубль всередині товару
-            base["Причина"] = "Дубль"
+            base["Опис виявлених недоліків"] = "Дубль"
             all_results.append(base)
         elif task["cross_dup"]:
             # Дубль посилання з іншого товару — копіюємо результат
             cached = url_result_cache.get(url)
             if cached:
                 dup_details = cached.copy()
-                dup_details["ID"] = product_id
-                dup_details["Фото"] = photo_index
+                dup_details["ID товару"] = product_id
+                dup_details["Фото (порядковий номер в КТ)"] = photo_index
                 all_results.append(dup_details)
-                st = dup_details.get("Статус", "Error")
+                st = dup_details.get("Загальна оцінка якості фото", "Error")
                 if st == "Хороше":
                     stats["Good"] += 1
                 elif st == "Погане":
@@ -571,7 +569,7 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
                 elif st == "Середнє":
                     stats["Medium"] += 1
             else:
-                base["Причина"] = "Не вдалося отримати результат (дубль)"
+                base["Опис виявлених недоліків"] = "Не вдалося отримати результат (дубль)"
                 all_results.append(base)
                 stats["Error"] += 1
 
@@ -589,10 +587,10 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
     log("Збереження...")
     try:
         details_df = pd.DataFrame(all_results)
-        details_df["ID"] = pd.Categorical(
-            details_df["ID"], categories=product_photo_map.keys(), ordered=True
+        details_df["ID товару"] = pd.Categorical(
+            details_df["ID товару"], categories=product_photo_map.keys(), ordered=True
         )
-        details_df = details_df.sort_values(by=["ID", "Фото"])
+        details_df = details_df.sort_values(by=["ID товару", "Фото (порядковий номер в КТ)"])
 
         OPTIONAL_COLS_MAP = {
             "check_shadows": "Тіні на головному фото",
@@ -600,10 +598,10 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
             "check_logos": "З логотипом",
             "check_watermarks": "Водяний знак",
             "check_rus_text": "Російський текст",
-            "check_qr_url": "URL/QR",
+            "check_qr_url": "Наявність URL або QR-коду на фото",
             "check_phone_numbers": "Номери телефонів",
         }
-        cols = ["ID", "Фото", "Посилання на фото", "Статус", "Причина"]
+        cols = ["ID товару", "Фото (порядковий номер в КТ)", "Посилання на фото", "Загальна оцінка якості фото", "Опис виявлених недоліків"]
         for key, col_name in OPTIONAL_COLS_MAP.items():
             if options.get(key) and col_name in details_df.columns:
                 has_yes = details_df[col_name].fillna("").astype(str).str.strip().eq("Так").any()
@@ -620,8 +618,8 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
         status_map, problems_map = {}, {}
         stats_data = []
 
-        for pid, grp in details_df.groupby("ID", observed=True):
-            s_list = grp["Статус"].tolist()
+        for pid, grp in details_df.groupby("ID товару", observed=True):
+            s_list = grp["Загальна оцінка якості фото"].tolist()
             fin = "Хороше"
             if "Погане" in s_list:
                 fin = "Погане"
@@ -629,21 +627,21 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
                 fin = "Середнє"
             status_map[pid] = fin
             probs = [
-                f"{r['Фото']} ({r['Причина']})"
+                f"{r['Фото (порядковий номер в КТ)']} ({r['Опис виявлених недоліків']})"
                 for _, r in grp.iterrows()
-                if r["Статус"] != "Хороше" and r["Причина"]
+                if r["Загальна оцінка якості фото"] != "Хороше" and r["Опис виявлених недоліків"]
             ]
             problems_map[pid] = "; ".join(probs)
             stats_data.append({
-                "ID": pid,
+                "ID товару": pid,
                 "Всього фото": len(s_list),
                 "К-ть Хороших": s_list.count("Хороше"),
                 "К-ть Поганих": s_list.count("Погане"),
                 "К-ть Середніх": s_list.count("Середнє"),
             })
 
-        stats_df = pd.DataFrame(stats_data).set_index("ID") if stats_data else pd.DataFrame()
-        df_out["Статус"] = df_out[id_col].map(status_map).fillna("N/A")
+        stats_df = pd.DataFrame(stats_data).set_index("ID товару") if stats_data else pd.DataFrame()
+        df_out["Загальна оцінка якості фото"] = df_out[id_col].map(status_map).fillna("N/A")
         df_out["Проблемні фото"] = df_out[id_col].map(problems_map).fillna("")
 
         if not stats_df.empty:
