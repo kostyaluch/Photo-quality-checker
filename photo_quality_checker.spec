@@ -31,7 +31,7 @@ VENDOR_TESSERACT = os.path.join(REPO_ROOT, "vendor", "tesseract")
 tesseract_tree = Tree(
     VENDOR_TESSERACT,
     prefix=os.path.join("vendor", "tesseract"),
-    excludes=[".gitkeep", ".gitignore"],
+    excludes=[".gitignore"],
 )
 
 a = Analysis(
@@ -83,6 +83,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=os.path.join(REPO_ROOT, "PQC_logo.ico"),
+    contents_directory=".",
 )
 
 coll = COLLECT(

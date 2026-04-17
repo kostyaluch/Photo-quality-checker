@@ -1,5 +1,6 @@
 # utils.py
 import os
+import sys
 import re
 import json
 import shutil
@@ -13,9 +14,18 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ----------------------------- Константи / Конфіг -----------------------------
-BASE_DIR = os.path.dirname(__file__) if '__file__' in globals() else os.getcwd()
-CONFIG_FILE = os.path.join(BASE_DIR, "config_photo_quality.json")
-CACHE_DIR = os.path.join(BASE_DIR, ".photo_cache")
+def _get_app_base_dir():
+    """Папка застосунку: біля .exe (frozen) або біля .py (script)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.dirname(__file__))
+
+
+APP_BASE_DIR = _get_app_base_dir()
+BUNDLED_BASE_DIR = getattr(sys, "_MEIPASS", APP_BASE_DIR)
+CONFIG_FILE = os.path.join(APP_BASE_DIR, "config_photo_quality.json")
+BUNDLED_CONFIG_FILE = os.path.join(BUNDLED_BASE_DIR, "config_photo_quality.json")
+CACHE_DIR = os.path.join(APP_BASE_DIR, ".photo_cache")
 
 HTTP_TIMEOUT = 15
 HTTP_DOWNLOAD_RETRIES = 3
@@ -72,8 +82,13 @@ def format_duration(seconds):
 def load_config():
     conf = copy.deepcopy(DEFAULT_CONFIG)
     try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        config_path = CONFIG_FILE
+        bundled_exists = os.path.exists(BUNDLED_CONFIG_FILE)
+        if not os.path.exists(config_path) and bundled_exists:
+            config_path = BUNDLED_CONFIG_FILE
+
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
                 user_conf = json.load(f)
 
             def update_dict(d, u):

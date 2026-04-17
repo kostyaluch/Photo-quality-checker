@@ -20,6 +20,20 @@ Photo Quality Checker — це потужний Python-інструмент дл
 3. Для Windows без вікна `cmd`:
    `run_photo_quality_checker.vbs` або `pythonw main_app.py`
 
+## Збірка у `.exe` (PyInstaller)
+
+1. Встановіть залежності:
+   `pip install -r requirements.txt`
+2. Встановіть PyInstaller:
+   `pip install pyinstaller`
+3. Підготуйте OCR-ресурси:
+   `python scripts/fetch_tesseract.py`
+4. Зберіть застосунок:
+   `pyinstaller photo_quality_checker.spec`
+
+Після збірки повний переносимий комплект знаходиться у `dist/PhotoQualityChecker/`.
+Для коректної роботи переносіть **усю** цю папку цілком (разом із `vendor/tesseract`, `watermark_templates` і `config_photo_quality.json`).
+
 ## Зміст
 
 1.  Загальний опис програми

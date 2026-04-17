@@ -24,9 +24,8 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
-# Шлях до папки з шаблонами
-BASE_DIR = os.path.dirname(__file__) if '__file__' in globals() else os.getcwd()
-TEMPLATES_DIR = os.path.join(BASE_DIR, "watermark_templates")
+# Шлях до папки з шаблонами (script + PyInstaller)
+TEMPLATES_DIR = resource_path("watermark_templates")
 
 # ---------------------------------------------------------------------------
 # Portable Tesseract OCR paths
