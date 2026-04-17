@@ -8,7 +8,7 @@ scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
 pythonwCheckExitCode = shell.Run("cmd /c where pythonw >nul 2>&1", 0, True)
 
 If pythonwCheckExitCode <> 0 Then
-    MsgBox "Не знайдено pythonw.exe у PATH. Запустіть через pythonw або встановіть Python Launcher.", vbExclamation, "Photo Quality Checker"
+    MsgBox "Не знайдено pythonw.exe у PATH. Переконайтеся, що Python встановлено та додано до системного PATH.", vbExclamation, "Photo Quality Checker"
     WScript.Quit 1
 End If
 

@@ -14,7 +14,10 @@ from image_metrics import resource_path
 
 
 def _hide_windows_console():
-    """Hide attached console window on Windows when started via python.exe."""
+    """Hide an attached console on Windows when launched via python.exe.
+
+    Has no effect when started via pythonw.exe or when no console is attached.
+    """
     if os.name != "nt":
         return
     try:
