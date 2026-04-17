@@ -32,7 +32,23 @@ Photo Quality Checker — це потужний Python-інструмент дл
    `pyinstaller photo_quality_checker.spec`
 
 Після збірки повний переносимий комплект знаходиться у `dist/PhotoQualityChecker/`.
-Для коректної роботи переносіть **усю** цю папку цілком (разом із `vendor/tesseract`, `watermark_templates` і `config_photo_quality.json`).
+Для коректної роботи переносіть **усю** цю папку цілком.
+
+Структура папки після збірки:
+
+```
+dist/PhotoQualityChecker/
+├── PhotoQualityChecker.exe   ← запускний файл
+└── _internal/                ← Python-рантайм, DLL-бібліотеки та ресурси
+    ├── config_photo_quality.json
+    ├── PQC_logo.ico
+    ├── watermark_templates/
+    └── vendor/tesseract/     ← портативний Tesseract OCR
+```
+
+Після першого запуску поряд з `.exe` автоматично з'являться:
+- `config_photo_quality.json` — збережені налаштування користувача
+- `.photo_cache/` — локальний кеш завантажених зображень
 
 ## Зміст
 
