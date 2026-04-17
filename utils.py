@@ -83,7 +83,8 @@ def load_config():
     conf = copy.deepcopy(DEFAULT_CONFIG)
     try:
         config_path = CONFIG_FILE
-        if not os.path.exists(config_path) and os.path.exists(BUNDLED_CONFIG_FILE):
+        bundled_exists = os.path.exists(BUNDLED_CONFIG_FILE)
+        if not os.path.exists(config_path) and bundled_exists:
             config_path = BUNDLED_CONFIG_FILE
 
         if os.path.exists(config_path):
