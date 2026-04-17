@@ -19,6 +19,9 @@ CACHE_DIR = os.path.join(BASE_DIR, ".photo_cache")
 HTTP_TIMEOUT = 15
 HTTP_DOWNLOAD_RETRIES = 3
 HTTP_RETRY_BACKOFF = 0.7
+HTTP_TIMEOUT_MULTIPLIER = 2
+DOWNLOAD_CHUNK_SIZE_BYTES = 64 * 1024
+MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024
 # Виключаємо лапки, крапки та коми з URL вже на рівні регексу
 URL_REGEX = re.compile(r"(https?://[^\s,;\)\]\}\'\"]+)", re.IGNORECASE)
 
@@ -221,7 +224,7 @@ def download_image_bytes(path_or_url, session):
         resp.raise_for_status()
         
         content = resp.content
-        if len(content) > 50 * 1024 * 1024:
+        if len(content) > MAX_IMAGE_SIZE_BYTES:
             return None, "File > 50MB"
 
         save_to_cache(path_or_url, content, resp.headers.get("Content-Type"))
@@ -260,18 +263,18 @@ async def async_download_image_bytes(path_or_url, session, semaphore):
         for attempt in range(1, HTTP_DOWNLOAD_RETRIES + 1):
             try:
                 timeout = aiohttp.ClientTimeout(
-                    total=HTTP_TIMEOUT * 2,
+                    total=HTTP_TIMEOUT * HTTP_TIMEOUT_MULTIPLIER,
                     connect=min(HTTP_TIMEOUT, 10),
-                    sock_read=HTTP_TIMEOUT * 2,
+                    sock_read=HTTP_TIMEOUT * HTTP_TIMEOUT_MULTIPLIER,
                 )
                 async with session.get(path_or_url, timeout=timeout) as resp:
                     resp.raise_for_status()
 
                     chunks = []
                     total_size = 0
-                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                    async for chunk in resp.content.iter_chunked(DOWNLOAD_CHUNK_SIZE_BYTES):
                         total_size += len(chunk)
-                        if total_size > 50 * 1024 * 1024:
+                        if total_size > MAX_IMAGE_SIZE_BYTES:
                             return None, "File > 50MB"
                         chunks.append(chunk)
                     content = b"".join(chunks)
