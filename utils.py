@@ -4,6 +4,7 @@ import re
 import json
 import shutil
 import hashlib
+import asyncio
 from datetime import datetime
 import aiohttp
 import requests
@@ -16,6 +17,8 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config_photo_quality.json")
 CACHE_DIR = os.path.join(BASE_DIR, ".photo_cache")
 
 HTTP_TIMEOUT = 15
+HTTP_DOWNLOAD_RETRIES = 3
+HTTP_RETRY_BACKOFF = 0.7
 # Виключаємо лапки, крапки та коми з URL вже на рівні регексу
 URL_REGEX = re.compile(r"(https?://[^\s,;\)\]\}\'\"]+)", re.IGNORECASE)
 
@@ -251,18 +254,44 @@ async def async_download_image_bytes(path_or_url, session, semaphore):
     if is_cached(path_or_url):
         return load_from_cache(path_or_url), None
 
+    last_error = None
+
     async with semaphore:
-        try:
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
-            async with session.get(path_or_url, timeout=timeout) as resp:
-                resp.raise_for_status()
-                content = await resp.read()
+        for attempt in range(1, HTTP_DOWNLOAD_RETRIES + 1):
+            try:
+                timeout = aiohttp.ClientTimeout(
+                    total=HTTP_TIMEOUT * 2,
+                    connect=min(HTTP_TIMEOUT, 10),
+                    sock_read=HTTP_TIMEOUT * 2,
+                )
+                async with session.get(path_or_url, timeout=timeout) as resp:
+                    resp.raise_for_status()
 
-                if len(content) > 50 * 1024 * 1024:
-                    return None, "File > 50MB"
+                    chunks = []
+                    total_size = 0
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        total_size += len(chunk)
+                        if total_size > 50 * 1024 * 1024:
+                            return None, "File > 50MB"
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
 
-                content_type = resp.headers.get("Content-Type")
-                save_to_cache(path_or_url, content, content_type)
-                return content, None
-        except Exception as e:
-            return None, str(e)
+                    content_type = resp.headers.get("Content-Type")
+                    save_to_cache(path_or_url, content, content_type)
+                    return content, None
+            except (
+                aiohttp.ClientPayloadError,
+                aiohttp.ClientConnectionError,
+                aiohttp.ServerDisconnectedError,
+                aiohttp.ClientOSError,
+                asyncio.TimeoutError,
+            ) as e:
+                last_error = e
+                if attempt < HTTP_DOWNLOAD_RETRIES:
+                    await asyncio.sleep(HTTP_RETRY_BACKOFF * attempt)
+                    continue
+                break
+            except Exception as e:
+                return None, str(e)
+
+    return None, str(last_error) if last_error else "Unknown download error"

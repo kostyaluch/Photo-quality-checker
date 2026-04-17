@@ -453,7 +453,11 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
     cpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency)
 
     # ---- Фаза 1: Асинхронна обробка оригінальних URL ----
-    headers = {"User-Agent": "PhotoQualityChecker/11.0", "Accept": "image/*, */*"}
+    headers = {
+        "User-Agent": "PhotoQualityChecker/11.0",
+        "Accept": "image/*, */*",
+        "Accept-Encoding": "identity",
+    }
     connector = aiohttp.TCPConnector(limit=concurrency * 2)
 
     async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
