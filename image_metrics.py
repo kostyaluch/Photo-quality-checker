@@ -606,8 +606,8 @@ def detect_phone_numbers_from_text(text):
 
     found = []
     seen = set()
-    for m in pattern.findall(cleaned):
-        digits = re.sub(r"\D", "", m)
+    for raw_match in pattern.findall(cleaned):
+        digits = re.sub(r"\D", "", raw_match)
         if len(digits) == 10 and digits.startswith("0"):
             normalized = "+38" + digits
         elif len(digits) == 12 and digits.startswith("380"):
