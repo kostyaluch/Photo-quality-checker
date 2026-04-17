@@ -18,8 +18,9 @@ CACHE_DIR = os.path.join(BASE_DIR, ".photo_cache")
 
 HTTP_TIMEOUT = 15
 HTTP_DOWNLOAD_RETRIES = 3
-HTTP_RETRY_BACKOFF = 0.7
-HTTP_TIMEOUT_MULTIPLIER = 2
+HTTP_RETRY_BACKOFF = 0.7  # base delay between retries (seconds)
+HTTP_TIMEOUT_MULTIPLIER = 2  # scales total/sock_read timeout from HTTP_TIMEOUT
+CONNECT_TIMEOUT_CAP = 10  # upper bound for TCP connect timeout (seconds)
 DOWNLOAD_CHUNK_SIZE_BYTES = 64 * 1024
 MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024
 # Виключаємо лапки, крапки та коми з URL вже на рівні регексу
@@ -257,14 +258,14 @@ async def async_download_image_bytes(path_or_url, session, semaphore):
     if is_cached(path_or_url):
         return load_from_cache(path_or_url), None
 
-    last_error = None
+    last_error = "Unknown download error"
 
     async with semaphore:
         for attempt in range(1, HTTP_DOWNLOAD_RETRIES + 1):
             try:
                 timeout = aiohttp.ClientTimeout(
                     total=HTTP_TIMEOUT * HTTP_TIMEOUT_MULTIPLIER,
-                    connect=min(HTTP_TIMEOUT, 10),
+                    connect=min(HTTP_TIMEOUT, CONNECT_TIMEOUT_CAP),
                     sock_read=HTTP_TIMEOUT * HTTP_TIMEOUT_MULTIPLIER,
                 )
                 async with session.get(path_or_url, timeout=timeout) as resp:
@@ -297,4 +298,4 @@ async def async_download_image_bytes(path_or_url, session, semaphore):
             except Exception as e:
                 return None, str(e)
 
-    return None, str(last_error) if last_error else "Unknown download error"
+    return None, str(last_error)
