@@ -18,8 +18,8 @@ CACHE_DIR = os.path.join(BASE_DIR, ".photo_cache")
 
 HTTP_TIMEOUT = 15
 HTTP_DOWNLOAD_RETRIES = 3
-HTTP_RETRY_BACKOFF = 0.7  # base delay between retries (seconds)
-HTTP_TIMEOUT_MULTIPLIER = 2  # scales total/sock_read timeout from HTTP_TIMEOUT
+HTTP_RETRY_BASE_DELAY = 0.7  # base delay between retries (seconds)
+HTTP_TIMEOUT_MULTIPLIER = 2  # extra read headroom for slow/unstable CDNs
 CONNECT_TIMEOUT_CAP = 10  # upper bound for TCP connect timeout (seconds)
 DOWNLOAD_CHUNK_SIZE_BYTES = 64 * 1024
 MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024
@@ -290,9 +290,9 @@ async def async_download_image_bytes(path_or_url, session, semaphore):
                 aiohttp.ClientOSError,
                 asyncio.TimeoutError,
             ) as e:
-                last_error = e
+                last_error = str(e)
                 if attempt < HTTP_DOWNLOAD_RETRIES:
-                    await asyncio.sleep(HTTP_RETRY_BACKOFF * attempt)
+                    await asyncio.sleep(HTTP_RETRY_BASE_DELAY * attempt)
                     continue
                 break
             except Exception as e:
