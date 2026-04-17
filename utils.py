@@ -4,6 +4,7 @@ import re
 import json
 import shutil
 import hashlib
+import copy
 import asyncio
 from datetime import datetime
 import aiohttp
@@ -35,6 +36,13 @@ DEFAULT_CONFIG = {
     "last_manual_column": "",
     "border_ratio": 0.1,
     "shadow_threshold": 50,
+    "shadow_mode": 2,
+    "shadow_mode_profiles": {
+        "1": {"white_v_min": 240, "white_s_max": 15, "shadow_tolerance": 10},
+        "2": {"white_v_min": 225, "white_s_max": 20, "shadow_tolerance": 35},
+        "3": {"white_v_min": 210, "white_s_max": 26, "shadow_tolerance": 60},
+        "4": {"white_v_min": 195, "white_s_max": 34, "shadow_tolerance": 85}
+    },
     "options": {
         "check_rus_text": False,
         "check_shadows": False,
@@ -62,7 +70,7 @@ def format_duration(seconds):
 
 # ----------------------------- Конфіг -----------------------------
 def load_config():
-    conf = DEFAULT_CONFIG.copy()
+    conf = copy.deepcopy(DEFAULT_CONFIG)
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -85,6 +93,27 @@ def load_config():
     else:
         for k, v in DEFAULT_CONFIG["options"].items():
             conf["options"].setdefault(k, v)
+
+    conf["shadow_mode"] = int(conf.get("shadow_mode", DEFAULT_CONFIG["shadow_mode"]))
+    if conf["shadow_mode"] < 1 or conf["shadow_mode"] > 4:
+        conf["shadow_mode"] = DEFAULT_CONFIG["shadow_mode"]
+
+    profiles = conf.get("shadow_mode_profiles", {})
+    default_profiles = DEFAULT_CONFIG["shadow_mode_profiles"]
+    if not isinstance(profiles, dict):
+        profiles = {}
+    normalized = {}
+    for mode in ("1", "2", "3", "4"):
+        src = profiles.get(mode, {})
+        if not isinstance(src, dict):
+            src = {}
+        base = default_profiles[mode]
+        normalized[mode] = {
+            "white_v_min": int(src.get("white_v_min", base["white_v_min"])),
+            "white_s_max": int(src.get("white_s_max", base["white_s_max"])),
+            "shadow_tolerance": int(src.get("shadow_tolerance", base["shadow_tolerance"])),
+        }
+    conf["shadow_mode_profiles"] = normalized
     return conf
 
 

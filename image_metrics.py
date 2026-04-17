@@ -332,7 +332,13 @@ def detect_1px_border(pil_image, black_threshold=30, std_threshold=8.0, min_cont
     except Exception as e:
         return False, f"Err border: {e}"
 
-def check_first_photo_bg(pil_image, shadow_tolerance=50):
+def check_first_photo_bg(
+    pil_image,
+    shadow_tolerance=50,
+    white_v_min=205,
+    white_s_max=25,
+    perimeter_multiplier=1.2,
+):
     """
     Перевіряє перше фото товару на відповідність стандартам Rozetka:
       1. Фон має бути майже білим (#FFFFFF) по всьому периметру (верх/низ/ліво/право).
@@ -385,9 +391,9 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
         stats = {name: _strip_stats(strip) for name, strip in strips.items()}
 
         # --- КРОК 1: Перевірка білого фону ---
-        # Білий піксель: V >= 205, S <= 25 (HSV-шкала 0-255 для OpenCV)
-        WHITE_V_MIN = 205
-        WHITE_S_MAX = 25
+        # Білий піксель: V >= white_v_min, S <= white_s_max (HSV-шкала 0-255 для OpenCV)
+        WHITE_V_MIN = max(0, min(255, int(white_v_min)))
+        WHITE_S_MAX = max(0, min(255, int(white_s_max)))
 
         non_white = [
             f"{name}(V={st['mean_v']:.0f},S={st['mean_s']:.0f})"
@@ -456,7 +462,7 @@ def check_first_photo_bg(pil_image, shadow_tolerance=50):
         # ніж для нижньої смуги: нижня зона є найпріоритетнішою (тіні під товаром),
         # тому вимагає суворішого контролю; загальний периметр може мати трохи
         # більшу природну варіацію (наприклад, краї рамки з обох боків).
-        PERIMETER_MULTIPLIER = 1.2
+        PERIMETER_MULTIPLIER = max(1.0, float(perimeter_multiplier))
         strips_with_product_edge = sum(
             1 for st in stats.values() if _strip_has_product_edge(st["v_ch"])
         )

@@ -4,6 +4,7 @@ import concurrent.futures
 import os
 import time
 import gc
+from io import BytesIO
 from datetime import datetime
 import aiohttp
 import pandas as pd
@@ -19,6 +20,8 @@ from image_metrics import (
     detect_phone_numbers_from_text, detect_qr_codes, detect_watermark_advanced, analyze_and_classify_photo,
     detect_transparency_in_bytes, detect_1px_border, is_low_contrast_image
 )
+
+PAUSE_POLL_INTERVAL_SEC = 0.5
 
 
 def find_id_column(df):
@@ -70,6 +73,22 @@ def _make_details_template(product_id, photo_index, url, options):
     return details
 
 
+def _make_preview_payload(image_data, max_side=460, quality=80):
+    """Стискає зображення для GUI-превʼю, щоб не перевантажувати Tk."""
+    img = pil_from_bytes(image_data)
+    if img is None:
+        return image_data
+    try:
+        img.thumbnail((max_side, max_side))
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        return image_data
+    finally:
+        img.close()
+
+
 def photo_worker_sync(task_data, conf, data):
     """Синхронний аналіз зображення (CPU-навантаження).
 
@@ -118,9 +137,18 @@ def photo_worker_sync(task_data, conf, data):
             important_log.append("Прозорий фон")
 
         if options.get("check_shadows") and photo_index == 1:
-            shadow_tolerance = int(conf.get("shadow_threshold", 50))
+            shadow_mode = int(conf.get("shadow_mode", 2))
+            shadow_mode = min(4, max(1, shadow_mode))
+            mode_profiles = conf.get("shadow_mode_profiles", {})
+            profile = mode_profiles.get(str(shadow_mode), {}) if isinstance(mode_profiles, dict) else {}
+            shadow_tolerance = int(profile.get("shadow_tolerance", conf.get("shadow_threshold", 50)))
+            white_v_min = int(profile.get("white_v_min", 205))
+            white_s_max = int(profile.get("white_s_max", 25))
             has_problem, reason = check_first_photo_bg(
-                img, shadow_tolerance=shadow_tolerance
+                img,
+                shadow_tolerance=shadow_tolerance,
+                white_v_min=white_v_min,
+                white_s_max=white_s_max,
             )
             metrics_results["has_shadows"] = has_problem
             metrics_results["shadows_reason"] = reason
@@ -463,10 +491,19 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
     async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
         semaphore = asyncio.Semaphore(concurrency)
 
+        async def wait_until_resumed_or_stopped():
+            while not stop_event.is_set():
+                if pause_event.is_set():
+                    return True
+                try:
+                    await asyncio.wait_for(pause_event.wait(), timeout=PAUSE_POLL_INTERVAL_SEC)
+                except asyncio.TimeoutError:
+                    continue
+            return False
+
         async def process_original(task):
             # Чекаємо на відновлення, якщо стоїть пауза
-            await pause_event.wait()
-            if stop_event.is_set():
+            if not await wait_until_resumed_or_stopped():
                 return None
 
             product_id = task["product_id"]
@@ -489,7 +526,7 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
 
             # Надсилаємо перше фото кожного товару як превʼю в GUI
             if photo_index == 1 and gui_callback:
-                gui_callback(("preview_image", data))
+                gui_callback(("preview_image", _make_preview_payload(data)))
 
             # Аналіз зображення (CPU-bound, у пулі потоків)
             try:
@@ -501,50 +538,70 @@ async def process_file(input_path, conf, gui_callback, manual_url_column, pause_
                 base["Опис виявлених недоліків"] = f"Помилка аналізу: {e}"
                 return base, f"[ID:{product_id}] ❌ Критична помилка: {e}"
 
-        # Запускаємо усі оригінальні завдання паралельно
-        coros = [process_original(t) for t in original_tasks]
+        pending_tasks = set()
+        task_index = 0
+        originals_count = len(original_tasks)
 
-        for coro in asyncio.as_completed(coros):
-            result = await coro
-            processed_count += 1
+        while (task_index < originals_count or pending_tasks) and not stop_event.is_set():
+            while task_index < originals_count and len(pending_tasks) < concurrency and not stop_event.is_set():
+                if not await wait_until_resumed_or_stopped():
+                    break
+                pending_tasks.add(asyncio.create_task(process_original(original_tasks[task_index])))
+                task_index += 1
 
-            elapsed = time.time() - start_time
-            avg = elapsed / processed_count if processed_count > 0 else 0
-            # ETA враховує всі завдання (включно з дублями)
-            remaining = total_photos - processed_count
-            eta_seconds = avg * remaining
-
-            if result is not None:
-                details, log_msg = result if isinstance(result, tuple) else (result, None)
-                if details:
-                    all_results.append(details)
-                    # Кешуємо для cross_dup-завдань
-                    url = details.get("Посилання на фото", "")
-                    if url:
-                        url_result_cache[url] = details
-
-                    st = details.get("Загальна оцінка якості фото", "Error")
-                    if st == "Хороше":
-                        stats["Good"] += 1
-                    elif st == "Погане":
-                        stats["Bad"] += 1
-                    elif st == "Середнє":
-                        stats["Medium"] += 1
-                    else:
-                        stats["Error"] += 1
-
-                    if log_msg:
-                        log(log_msg)
-
-            if processed_count % 50 == 0:
-                log(f"--- {processed_count}/{total_photos} ---")
-                gc.collect()
-
-            if gui_callback:
-                gui_callback(("progress_update", (processed_count, total_photos, eta_seconds)))
-
-            if stop_event.is_set():
+            if not pending_tasks:
                 break
+
+            done, pending_tasks = await asyncio.wait(
+                pending_tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for done_task in done:
+                result = done_task.result()
+                processed_count += 1
+
+                elapsed = time.time() - start_time
+                avg = elapsed / processed_count if processed_count > 0 else 0
+                # ETA враховує всі завдання (включно з дублями)
+                remaining = total_photos - processed_count
+                eta_seconds = avg * remaining
+
+                if result is not None:
+                    details, log_msg = result if isinstance(result, tuple) else (result, None)
+                    if details:
+                        all_results.append(details)
+                        # Кешуємо для cross_dup-завдань
+                        url = details.get("Посилання на фото", "")
+                        if url:
+                            url_result_cache[url] = details
+
+                        st = details.get("Загальна оцінка якості фото", "Error")
+                        if st == "Хороше":
+                            stats["Good"] += 1
+                        elif st == "Погане":
+                            stats["Bad"] += 1
+                        elif st == "Середнє":
+                            stats["Medium"] += 1
+                        else:
+                            stats["Error"] += 1
+
+                        if log_msg:
+                            log(log_msg)
+
+                if processed_count % 50 == 0:
+                    log(f"--- {processed_count}/{total_photos} ---")
+                    gc.collect()
+
+                if gui_callback:
+                    gui_callback(("progress_update", (processed_count, total_photos, eta_seconds)))
+
+                if stop_event.is_set():
+                    break
+
+        if stop_event.is_set() and pending_tasks:
+            for p in pending_tasks:
+                p.cancel()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
 
     cpu_executor.shutdown(wait=False)
 
