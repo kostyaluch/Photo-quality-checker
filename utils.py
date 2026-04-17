@@ -274,9 +274,10 @@ async def async_download_image_bytes(path_or_url, session, semaphore):
                     chunks = []
                     total_size = 0
                     async for chunk in resp.content.iter_chunked(DOWNLOAD_CHUNK_SIZE_BYTES):
-                        total_size += len(chunk)
-                        if total_size > MAX_IMAGE_SIZE_BYTES:
+                        next_size = total_size + len(chunk)
+                        if next_size > MAX_IMAGE_SIZE_BYTES:
                             return None, "File > 50MB"
+                        total_size = next_size
                         chunks.append(chunk)
                     content = b"".join(chunks)
 
