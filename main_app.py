@@ -2,6 +2,7 @@
 import asyncio
 import os
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from io import BytesIO
@@ -36,6 +37,7 @@ _FONT_LOG     = ("Consolas", 9)
 # Fallback canvas dimensions used before the preview widget is realized
 _PREVIEW_FALLBACK_W = 320
 _PREVIEW_FALLBACK_H = 185
+_PREVIEW_MIN_RESCHEDULE_MS = 20
 # ───────────────────────────────────────────────────────────────────────────────
 
 
@@ -119,6 +121,8 @@ class PhotoQualityGUI(tk.Tk):
         self._preview_lock = threading.Lock()
         self._latest_preview_data = None
         self._preview_update_scheduled = False
+        self._last_preview_update_ts = 0.0
+        self._preview_min_interval = 0.12
         self.create_widgets()
 
     # ── Widget construction ────────────────────────────────────────────────────
@@ -373,22 +377,42 @@ class PhotoQualityGUI(tk.Tk):
         cb_s.grid(row=0, column=0, sticky="w")
         ToolTip(cb_s, "Перевіряє перше фото товару: фон має бути білим, "
                       "а тіні — мінімальними. Аналізує весь периметр (верх/низ/ліво/право).")
-        ttk.Label(sliders, text="Допуск:", style="Muted.TLabel").grid(
+        ttk.Label(sliders, text="Режим:", style="Muted.TLabel").grid(
             row=0, column=1, sticky="e", padx=(8, 4))
-        self.shadow_thresh = tk.IntVar(value=int(self.conf.get("shadow_threshold", 50)))
-        sc_s = tk.Scale(sliders, from_=0, to=100, resolution=1, orient="horizontal",
-                        variable=self.shadow_thresh, length=130, showvalue=0,
+        self.shadow_mode_profiles = self.conf.get(
+            "shadow_mode_profiles", DEFAULT_CONFIG.get("shadow_mode_profiles", {})
+        )
+        self.shadow_mode = tk.IntVar(value=int(self.conf.get("shadow_mode", 2)))
+        self.shadow_mode_label = tk.StringVar()
+        self._shadow_mode_titles = {
+            1: "1 — дуже вибаглива",
+            2: "2 — збалансована",
+            3: "3 — м'якша",
+            4: "4 — найм'якша",
+        }
+        self._update_shadow_mode_label()
+        sc_s = tk.Scale(sliders, from_=1, to=4, resolution=1, orient="horizontal",
+                        variable=self.shadow_mode, length=130, showvalue=0,
+                        command=lambda *_: self._update_shadow_mode_label(),
                         bg=_C_SURFACE, fg=_C_TEXT, highlightthickness=0,
                         troughcolor=_C_BORDER, sliderrelief="flat", bd=0)
         sc_s.grid(row=0, column=2, sticky="ew", padx=(0, 4))
-        ToolTip(sc_s, "Допуск тіней на першому фото (0–100).\n"
-                      "0 = суворо: майже ідеально білий фон, тіні заборонені.\n"
-                      "100 = м'яко: допускаються помітні природні тіні.\n"
-                      "Рекомендовано: 30–70 для Rozetka.")
-        # Value label (auto-updates via textvariable)
-        ttk.Label(sliders, textvariable=self.shadow_thresh,
-                  style="Muted.TLabel", width=3, anchor="w").grid(
+        ToolTip(sc_s, "Режими перевірки тіней/фону (1–4).\n"
+                      "1 = дуже вибаглива перевірка.\n"
+                      "4 = найм'якіша перевірка.\n"
+                      "Детальні пороги змінюються кнопкою ⚙.")
+        ttk.Label(sliders, textvariable=self.shadow_mode_label,
+                  style="Muted.TLabel", width=20, anchor="w").grid(
             row=0, column=3, sticky="w")
+        shadow_settings_btn = ttk.Button(
+            sliders,
+            text="⚙",
+            width=2,
+            style="Secondary.TButton",
+            command=self.open_shadow_modes_dialog,
+        )
+        shadow_settings_btn.grid(row=0, column=4, sticky="w", padx=(2, 0))
+        ToolTip(shadow_settings_btn, "Детальні налаштування порогів білизни фону та тіней для режимів 1–4.")
 
         # Borders
         self.opt_borders = tk.BooleanVar(value=opts_cfg.get("check_borders", True))
@@ -431,7 +455,7 @@ class PhotoQualityGUI(tk.Tk):
         ToolTip(cb_l, "Виявляє логотипи або фірмові елементи Rozetka на зображенні.")
 
         self.opt_watermark = tk.BooleanVar(value=opts_cfg.get("check_watermarks", False))
-        cb_w = make_cb(cbox, "Водяні знаки", self.opt_watermark)
+        cb_w = make_cb(cbox, "Водяні знаки, значки", self.opt_watermark)
         cb_w.grid(row=0, column=1, sticky="w", pady=2)
         ToolTip(cb_w, "Виявляє водяні знаки на фото за допомогою шаблонів із папки watermark_templates.")
 
@@ -452,11 +476,75 @@ class PhotoQualityGUI(tk.Tk):
         ToolTip(cb_ph, "Виявляє телефонні номери у тексті на фото (OCR).")
 
         self.opt_1px = tk.BooleanVar(value=opts_cfg.get("check_1px_border", False))
-        cb_p = make_cb(cbox, "Тонка рамка (1px)", self.opt_1px)
+        cb_p = make_cb(cbox, "Тонка рамка", self.opt_1px)
         cb_p.grid(row=2, column=0, sticky="w", pady=2)
         ToolTip(cb_p, "Виявляє чорні/темні рамки товщиною 1-2 пікселі по самому краю фото.")
 
         return card
+
+    def _update_shadow_mode_label(self):
+        mode = int(self.shadow_mode.get())
+        mode = 1 if mode < 1 else 4 if mode > 4 else mode
+        self.shadow_mode.set(mode)
+        self.shadow_mode_label.set(self._shadow_mode_titles.get(mode, f"{mode}"))
+
+    def open_shadow_modes_dialog(self):
+        win = tk.Toplevel(self)
+        win.title("Налаштування режимів тіней")
+        win.transient(self)
+        win.grab_set()
+        win.resizable(False, False)
+
+        ttk.Label(
+            win,
+            text="Пороги для режимів 1–4 (білизна фону й тіні):",
+            style="Card.TLabel",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(10, 6))
+
+        ttk.Label(win, text="Режим", style="Muted.TLabel").grid(row=1, column=0, padx=8, sticky="w")
+        ttk.Label(win, text="Мін V", style="Muted.TLabel").grid(row=1, column=1, padx=8)
+        ttk.Label(win, text="Макс S", style="Muted.TLabel").grid(row=1, column=2, padx=8)
+        ttk.Label(win, text="Тіні 0–100", style="Muted.TLabel").grid(row=1, column=3, padx=8)
+
+        vars_by_mode = {}
+        for mode in range(1, 5):
+            prof = self.shadow_mode_profiles.get(str(mode), {})
+            v_var = tk.IntVar(value=int(prof.get("white_v_min", 205)))
+            s_var = tk.IntVar(value=int(prof.get("white_s_max", 25)))
+            t_var = tk.IntVar(value=int(prof.get("shadow_tolerance", 50)))
+            vars_by_mode[str(mode)] = {"white_v_min": v_var, "white_s_max": s_var, "shadow_tolerance": t_var}
+
+            ttk.Label(win, text=f"{mode}").grid(row=1 + mode, column=0, sticky="w", padx=10, pady=3)
+            ttk.Entry(win, textvariable=v_var, width=7).grid(row=1 + mode, column=1, padx=8, pady=3)
+            ttk.Entry(win, textvariable=s_var, width=7).grid(row=1 + mode, column=2, padx=8, pady=3)
+            ttk.Entry(win, textvariable=t_var, width=7).grid(row=1 + mode, column=3, padx=8, pady=3)
+
+        def _save_shadow_profiles():
+            new_profiles = {}
+            try:
+                for mode in ("1", "2", "3", "4"):
+                    raw = vars_by_mode[mode]
+                    white_v_min = max(0, min(255, int(raw["white_v_min"].get())))
+                    white_s_max = max(0, min(255, int(raw["white_s_max"].get())))
+                    shadow_tol = max(0, min(100, int(raw["shadow_tolerance"].get())))
+                    new_profiles[mode] = {
+                        "white_v_min": white_v_min,
+                        "white_s_max": white_s_max,
+                        "shadow_tolerance": shadow_tol,
+                    }
+            except Exception:
+                messagebox.showerror("Помилка", "Вкажіть коректні числові значення.")
+                return
+
+            self.shadow_mode_profiles = new_profiles
+            self.conf["shadow_mode_profiles"] = new_profiles
+            save_config(self.conf)
+            win.destroy()
+
+        btns = ttk.Frame(win, style="Card.TFrame")
+        btns.grid(row=6, column=0, columnspan=4, sticky="e", padx=10, pady=(8, 10))
+        ttk.Button(btns, text="Скасувати", style="Secondary.TButton", command=win.destroy).pack(side="right")
+        ttk.Button(btns, text="Зберегти", style="Primary.TButton", command=_save_shadow_profiles).pack(side="right", padx=(0, 6))
 
     def _build_launch_card(self, parent):
         """Card ④ – launch controls: threads, primary Run button, secondary actions."""
@@ -731,6 +819,9 @@ class PhotoQualityGUI(tk.Tk):
         return best_col
 
     def collect_settings(self):
+        current_mode = int(self.shadow_mode.get())
+        current_profile = self.shadow_mode_profiles.get(str(current_mode), {})
+        fallback_shadow = int(current_profile.get("shadow_tolerance", 50))
         return {
             "good": {"width": self.good_w.get(), "height": self.good_h.get(), "sharpness": self.good_s.get()},
             "bad": {"width": self.bad_w.get(), "height": self.bad_h.get(), "sharpness": self.bad_s.get()},
@@ -739,7 +830,9 @@ class PhotoQualityGUI(tk.Tk):
             "concurrency": self.conc_var.get(),
             "last_manual_column": self.col_combo.get(),
             "border_ratio": self.border_r.get(),
-            "shadow_threshold": self.shadow_thresh.get(),
+            "shadow_threshold": fallback_shadow,
+            "shadow_mode": current_mode,
+            "shadow_mode_profiles": self.shadow_mode_profiles,
             "options": {
                 "check_logos": self.opt_logos.get(),
                 "check_rus_text": self.opt_rus_text.get(),
@@ -820,19 +913,26 @@ class PhotoQualityGUI(tk.Tk):
         self.after(0, self.append_log, msg)
 
     def _flush_preview_update(self):
+        now = time.monotonic()
+        elapsed = now - self._last_preview_update_ts
+        if elapsed < self._preview_min_interval:
+            self.after(max(1, int((self._preview_min_interval - elapsed) * 1000)), self._flush_preview_update)
+            return
+
         with self._preview_lock:
             data = self._latest_preview_data
             self._latest_preview_data = None
 
         if data is not None:
             self.update_preview(data)
+            self._last_preview_update_ts = now
 
         with self._preview_lock:
             if self._latest_preview_data is None:
                 self._preview_update_scheduled = False
                 return
 
-        self.after(0, self._flush_preview_update)
+        self.after(max(_PREVIEW_MIN_RESCHEDULE_MS, int(self._preview_min_interval * 1000 // 2)), self._flush_preview_update)
 
     def append_log(self, msg):
         if isinstance(msg, tuple):

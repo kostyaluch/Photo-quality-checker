@@ -14,7 +14,30 @@
   "concurrency": 8,
   "last_manual_column": "goods_images_url",
   "border_ratio": 0.15,
-  "shadow_threshold": 50,
+  "shadow_threshold": 35,
+  "shadow_mode": 2,
+  "shadow_mode_profiles": {
+    "1": {
+      "white_v_min": 240,
+      "white_s_max": 15,
+      "shadow_tolerance": 10
+    },
+    "2": {
+      "white_v_min": 225,
+      "white_s_max": 20,
+      "shadow_tolerance": 35
+    },
+    "3": {
+      "white_v_min": 210,
+      "white_s_max": 26,
+      "shadow_tolerance": 60
+    },
+    "4": {
+      "white_v_min": 195,
+      "white_s_max": 34,
+      "shadow_tolerance": 85
+    }
+  },
   "options": {
     "check_logos": false,
     "check_rus_text": true,
