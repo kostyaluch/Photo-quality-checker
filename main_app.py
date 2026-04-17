@@ -820,11 +820,13 @@ class PhotoQualityGUI(tk.Tk):
         self.after(0, self.append_log, msg)
 
     def _flush_preview_update(self):
-        with self._preview_lock:
-            data = self._latest_preview_data
-            self._latest_preview_data = None
-            self._preview_update_scheduled = False
-        if data is not None:
+        while True:
+            with self._preview_lock:
+                data = self._latest_preview_data
+                self._latest_preview_data = None
+                if data is None:
+                    self._preview_update_scheduled = False
+                    return
             self.update_preview(data)
 
     def append_log(self, msg):
