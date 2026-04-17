@@ -12,6 +12,24 @@ from utils import load_config, save_config, clear_cache_dir, ensure_cache_dir, D
 from processing_engine import process_file
 from image_metrics import resource_path
 
+
+def _hide_windows_console():
+    """Hide an attached console on Windows when launched via python.exe.
+
+    Has no effect when started via pythonw.exe or when no console is attached.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)
+    except Exception:
+        pass
+
+
 # ── Design tokens ──────────────────────────────────────────────────────────────
 # Light theme palette – change here to restyle the whole app.
 _C_BG         = "#F1F5F9"   # Window background (light blue-grey)
@@ -1044,5 +1062,6 @@ class PhotoQualityGUI(tk.Tk):
             messagebox.showinfo("Успіх", msg)
 
 if __name__ == "__main__":
+    _hide_windows_console()
     app = PhotoQualityGUI()
     app.mainloop()

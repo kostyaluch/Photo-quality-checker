@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+*.docx binary
+*.xlsx binary
+*.xls binary
+*.xlsm binary
+*.exe binary
+*.dll binary
+*.traineddata binary
